@@ -476,7 +476,7 @@ app.use(
   }
 );
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server kjører på port ${PORT} (${NODE_ENV})`);
 
   if (RUN_SCRAPE_WORKER && SCRAPING_ENABLED) {
