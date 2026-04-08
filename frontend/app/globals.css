@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+:root {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f8fafc;
+  --color-surface-muted: #eef2f7;
+
+  --color-accent: #ff6a3d;
+  --color-accent-hover: #ff5a2a;
+  --color-accent-soft: #fff4ef;
+
+  --color-text: #0f172a;
+  --color-text-soft: #475569;
+  --color-muted: #6b7280;
+
+  --color-border: #e5e7eb;
+
+  --color-success-bg: #f0fdf4;
+  --color-success-text: #166534;
+
+  --color-danger-bg: #fef2f2;
+  --color-danger-text: #b91c1c;
+
+  --color-warning-bg: #fff4ef;
+  --color-warning-text: #9a3412;
+}
+
+.app-theme-scope.theme-light {
+  --color-bg: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-soft: #f8fafc;
+  --color-surface-muted: #eef2f7;
+
+  --color-accent: #ff6a3d;
+  --color-accent-hover: #ff5a2a;
+  --color-accent-soft: #fff4ef;
+
+  --color-text: #0f172a;
+  --color-text-soft: #475569;
+  --color-muted: #6b7280;
+
+  --color-border: #e5e7eb;
+
+  --color-success-bg: #f0fdf4;
+  --color-success-text: #166534;
+
+  --color-danger-bg: #fef2f2;
+  --color-danger-text: #b91c1c;
+
+  --color-warning-bg: #fff4ef;
+  --color-warning-text: #9a3412;
+}
+
+.app-theme-scope.theme-dark {
+  --color-bg: #0b1220;
+  --color-surface: #111827;
+  --color-surface-soft: #172033;
+  --color-surface-muted: #1e293b;
+
+  --color-accent: #ff6a3d;
+  --color-accent-hover: #ff5a2a;
+  --color-accent-soft: rgba(255, 106, 61, 0.12);
+
+  --color-text: #f8fafc;
+  --color-text-soft: #cbd5e1;
+  --color-muted: #94a3b8;
+
+  --color-border: #243041;
+
+  --color-success-bg: #052e1a;
+  --color-success-text: #86efac;
+
+  --color-danger-bg: #3b0d0d;
+  --color-danger-text: #fca5a5;
+
+  --color-warning-bg: #3a1f0b;
+  --color-warning-text: #fdba74;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  background: var(--color-bg);
+  scroll-behavior: smooth;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+button {
+  cursor: pointer;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+summary {
+  list-style: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-muted);
+}
+
+img,
+svg {
+  display: block;
+}
+
+::selection {
+  background: rgba(255, 106, 61, 0.18);
+  color: var(--color-text);
+}

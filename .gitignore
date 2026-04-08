@@ -1,0 +1,25 @@
+# dependencies
+node_modules
+
+# next.js
+.next
+
+# builds
+dist
+build
+
+# environment variables
+.env
+.env.*
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# prisma
+/generated/prisma
+
+# logs
+*.log
+
+# OS
+.DS_Store

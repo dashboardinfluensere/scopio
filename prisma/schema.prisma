@@ -1,0 +1,375 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Platform {
+  TIKTOK
+  INSTAGRAM
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ImportSourceType {
+  MANUAL_UPLOAD
+  API
+  SCRAPER
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum SocialAccountStatus {
+  ACTIVE
+  PAUSED
+  DISCONNECTED
+}
+
+enum InitialSyncStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum ScrapeJobType {
+  INITIAL
+  DAILY
+  MANUAL
+}
+
+enum ScrapeJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum SubscriptionPlan {
+  FREE
+  STARTER
+  PRO
+  BUSINESS
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model User {
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  name                 String?
+  authProvider         String?
+  authProviderId       String?  @unique
+  activeOrganizationId String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  memberships        OrganizationMember[]
+  accessRequests     AccessRequest[]
+  adminLogs          AdminLog[]
+  activeOrganization Organization?       @relation("ActiveOrganization", fields: [activeOrganizationId], references: [id], onDelete: SetNull)
+
+  @@index([activeOrganizationId])
+}
+
+model Organization {
+  id                     String   @id @default(cuid())
+  name                   String
+  slug                   String?  @unique
+  joinCode               String?
+  joinPasswordHash       String?
+  initialScrapeStartedAt DateTime?
+  onboardingCompletedAt  DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  members                OrganizationMember[]
+  subscription           Subscription?
+  socialAccounts         SocialAccount[]
+  scrapeJobs             ScrapeJob[]
+  importRuns             ImportRun[]
+  contentPosts           ContentPost[]
+  postSnapshots          PostSnapshot[]
+  accountSnapshots       AccountSnapshot[]
+  socialAccountAddEvents SocialAccountAddEvent[]
+
+  activeUsers User[] @relation("ActiveOrganization")
+
+  @@index([joinCode])
+}
+
+model AccessRequest {
+  id            String              @id @default(cuid())
+  userId        String
+  email         String
+  workspaceName String
+  selectedPlan  SubscriptionPlan
+  status        AccessRequestStatus @default(PENDING)
+  note          String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  reviewedAt    DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model OrganizationMember {
+  id             String     @id @default(cuid())
+  userId         String
+  organizationId String
+  role           MemberRole @default(MEMBER)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId])
+}
+
+model Subscription {
+  id             String             @id @default(cuid())
+  organizationId String             @unique
+  plan           SubscriptionPlan   @default(FREE)
+  status         SubscriptionStatus @default(INACTIVE)
+
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+  stripePriceId        String?
+
+  currentPeriodStart DateTime?
+  currentPeriodEnd   DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model SocialAccount {
+  id                    String              @id @default(cuid())
+  organizationId        String
+  platform              Platform
+  accountHandle         String
+  displayName           String?
+  profileUrl            String?
+  status                SocialAccountStatus @default(ACTIVE)
+  initialSyncStatus     InitialSyncStatus   @default(PENDING)
+  needsInitialSync      Boolean             @default(true)
+  lastSyncedAt          DateTime?
+  lastDailyJobCreatedAt DateTime?
+  isActive              Boolean             @default(true)
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contentPosts     ContentPost[]
+  accountSnapshots AccountSnapshot[]
+  scrapeJobs       ScrapeJob[]
+  addEvents        SocialAccountAddEvent[]
+
+  @@unique([organizationId, platform, accountHandle])
+  @@index([organizationId])
+  @@index([platform])
+  @@index([accountHandle])
+  @@index([status])
+  @@index([initialSyncStatus])
+  @@index([isActive])
+}
+
+model ContentPost {
+  id              String        @id @default(cuid())
+  organizationId  String
+  socialAccountId String
+  platform        Platform
+  externalPostId  String
+  url             String?
+  thumbnailUrl    String?
+  caption         String?
+  tags            String[]
+  publishedAt     DateTime
+  durationSeconds Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  snapshots     PostSnapshot[]
+
+  @@unique([socialAccountId, externalPostId])
+  @@index([organizationId])
+  @@index([socialAccountId])
+  @@index([platform])
+  @@index([publishedAt])
+  @@index([externalPostId])
+}
+
+model PostSnapshot {
+  id             String   @id @default(cuid())
+  organizationId String
+  contentPostId  String
+  scrapedAt      DateTime
+  views          Int?
+  likes          Int?
+  comments       Int?
+  shares         Int?
+  saves          Int?
+  engagementRate Float?
+  importRunId    String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contentPost  ContentPost  @relation(fields: [contentPostId], references: [id], onDelete: Cascade)
+  importRun    ImportRun?   @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([contentPostId, scrapedAt])
+  @@index([organizationId])
+  @@index([contentPostId])
+  @@index([scrapedAt])
+  @@index([importRunId])
+}
+
+model AccountSnapshot {
+  id              String   @id @default(cuid())
+  organizationId  String
+  socialAccountId String
+  scrapedAt       DateTime
+  followers       Int?
+  following       Int?
+  totalLikes      Int?
+  totalPosts      Int?
+  profileViews    Int?
+  importRunId     String?
+  createdAt       DateTime @default(now())
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  importRun     ImportRun?    @relation(fields: [importRunId], references: [id], onDelete: SetNull)
+
+  @@unique([socialAccountId, scrapedAt])
+  @@index([organizationId])
+  @@index([socialAccountId])
+  @@index([scrapedAt])
+  @@index([importRunId])
+}
+
+model ImportRun {
+  id             String           @id @default(cuid())
+  organizationId String
+  sourceType     ImportSourceType
+  fileName       String?
+  fileFormat     String?
+  importedAt     DateTime         @default(now())
+  status         ImportStatus     @default(PENDING)
+  platformGuess  Platform?
+  rowCount       Int?
+  notes          String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  postSnapshots    PostSnapshot[]
+  accountSnapshots AccountSnapshot[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([platformGuess])
+  @@index([importedAt])
+}
+
+model ScrapeJob {
+  id              String          @id @default(cuid())
+  organizationId  String
+  socialAccountId String
+  type            ScrapeJobType
+  status          ScrapeJobStatus @default(PENDING)
+  apifyRunId      String?
+  scheduledFor    DateTime?
+  attemptCount    Int             @default(0)
+  priority        Int             @default(0)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  errorMessage    String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([socialAccountId])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+  @@index([scheduledFor])
+  @@index([priority])
+}
+
+model SocialAccountAddEvent {
+  id              String   @id @default(cuid())
+  organizationId  String
+  socialAccountId String?
+  platform        Platform
+  accountHandle   String
+  createdAt       DateTime @default(now())
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  socialAccount SocialAccount? @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([socialAccountId])
+  @@index([createdAt])
+}
+
+model AdminLog {
+  id             String   @id @default(cuid())
+  actorUserId    String?
+  actorEmail     String?
+  action         String
+  targetType     String?
+  targetId       String?
+  organizationId String?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  actorUser User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([actorEmail])
+  @@index([action])
+  @@index([organizationId])
+  @@index([createdAt])
+}
