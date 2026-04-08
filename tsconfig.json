@@ -1,14 +1,13 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "commonjs",
-    "moduleResolution": "node",
+    "module": "node16",
+    "moduleResolution": "node16",
     "rootDir": ".",
     "outDir": "dist",
     "esModuleInterop": true,
     "strict": true,
-    "skipLibCheck": true,
-    "ignoreDeprecations": "6.0"
+    "skipLibCheck": true
   },
   "include": ["backend/**/*.ts"],
   "exclude": ["frontend", "node_modules", "dist"]
