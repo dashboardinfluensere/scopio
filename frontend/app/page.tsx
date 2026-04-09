@@ -112,12 +112,16 @@ export default async function HomePage() {
   const { userId } = await auth();
 
   if (userId) {
+    let viewer: ViewerResponse;
+
     try {
-      const viewer = await getViewer();
-      redirect(resolveAccessRedirect(viewer));
-    } catch {
+      viewer = await getViewer();
+    } catch (error) {
+      console.error("Kunne ikke hente viewer i /:", error);
       redirect("/request-access");
     }
+
+    redirect(resolveAccessRedirect(viewer));
   }
 
   return (
