@@ -3,6 +3,8 @@ import { Resend } from "resend";
 const EMAIL_FROM =
   process.env.EMAIL_FROM || "Scopio <noreply@mail.scopio.no>";
 
+const ADMIN_ACCESS_REQUESTS_URL = "https://scopio.no/admin/access-requests";
+
 function getResendClient() {
   const apiKey = process.env.RESEND_API_KEY;
 
@@ -39,6 +41,11 @@ export async function sendNewAccessRequestNotification(params: {
             ? `<p><strong>Kommentar:</strong><br>${escapeHtml(note)}</p>`
             : "<p><strong>Kommentar:</strong> Ingen</p>"
         }
+        <p>
+          <a href="${ADMIN_ACCESS_REQUESTS_URL}" target="_blank" rel="noopener noreferrer">
+            Gå til admin-siden for tilgangsforespørsler
+          </a>
+        </p>
       `,
     });
 
