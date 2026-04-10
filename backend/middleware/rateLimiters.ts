@@ -93,6 +93,17 @@ export const initialSubmitLimiter = rateLimit({
   },
 });
 
+export const retryScrapeLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: IS_PROD ? 10 : 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    ok: false,
+    error: "For mange forsøk på å restarte scraping. Prøv igjen om litt.",
+  },
+});
+
 export const accessRequestCreateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: IS_PROD ? 3 : 100,

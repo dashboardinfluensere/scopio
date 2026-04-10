@@ -4,6 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { getClientApiUrl } from "../lib/api";
 
+type LatestJobSummary = {
+  id: string;
+  type: "INITIAL" | "DAILY";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 type SocialAccount = {
   id: string;
   platform: "TIKTOK" | "INSTAGRAM";
@@ -14,6 +24,12 @@ type SocialAccount = {
   initialSyncStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
   isActive: boolean;
   createdAt: string;
+  latestInitialJob: LatestJobSummary | null;
+  latestDailyJob: LatestJobSummary | null;
+  retry: {
+    canRetryInitial: boolean;
+    canRetryDaily: boolean;
+  };
 };
 
 type TrackedAccountsManagerProps = {
@@ -28,6 +44,8 @@ type TrackedAccountsManagerProps = {
 };
 
 type Platform = "TIKTOK" | "INSTAGRAM";
+type RetryableJobType = "INITIAL" | "DAILY";
+type JobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
 
 type CreateSocialAccountResponse = {
   ok: boolean;
@@ -59,12 +77,23 @@ type UpdateDisplayNameResponse = {
   socialAccount?: SocialAccount;
 };
 
-type InitialSyncStatusResponse = {
+type RetryScrapeResponse = {
   ok: boolean;
-  accounts: Array<{
-    id: string;
-    initialSyncStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
-  }>;
+  message?: string;
+  error?: string;
+  retry?: {
+    jobType: RetryableJobType;
+    queuedJob: LatestJobSummary | null;
+  };
+};
+
+type SocialAccountsResponse = {
+  ok: boolean;
+  accounts: SocialAccount[];
+  usage?: {
+    accountsAddedThisPeriod?: number;
+    nextAvailableAddAt?: string | null;
+  };
 };
 
 const API_URL = getClientApiUrl();
@@ -138,6 +167,13 @@ function getInitialSyncLabel(status: SocialAccount["initialSyncStatus"]) {
   return "Venter";
 }
 
+function getJobStatusLabel(status: JobStatus) {
+  if (status === "COMPLETED") return "Vellykket";
+  if (status === "RUNNING") return "Kjører";
+  if (status === "FAILED") return "Feilet";
+  return "Venter";
+}
+
 function getInitialSyncBadgeClasses(status: SocialAccount["initialSyncStatus"]) {
   if (status === "COMPLETED") {
     return "border-[#166534] bg-[#052e1a] text-[#86efac]";
@@ -152,6 +188,31 @@ function getInitialSyncBadgeClasses(status: SocialAccount["initialSyncStatus"]) 
   }
 
   return "border-[var(--color-border)] bg-[var(--color-surface-soft)] text-[var(--color-muted)]";
+}
+
+function getJobBadgeClasses(status: JobStatus) {
+  if (status === "COMPLETED") {
+    return "border-[#166534] bg-[#052e1a] text-[#86efac]";
+  }
+
+  if (status === "RUNNING") {
+    return "border-[#1d4ed8] bg-[#0b1f3a] text-[#93c5fd]";
+  }
+
+  if (status === "FAILED") {
+    return "border-[#7f1d1d] bg-[#3b0d0d] text-[#fca5a5]";
+  }
+
+  return "border-[var(--color-border)] bg-[var(--color-surface-soft)] text-[var(--color-muted)]";
+}
+
+function hasPendingOrRunningWork(account: SocialAccount) {
+  return (
+    account.initialSyncStatus === "PENDING" ||
+    account.initialSyncStatus === "RUNNING" ||
+    account.latestDailyJob?.status === "PENDING" ||
+    account.latestDailyJob?.status === "RUNNING"
+  );
 }
 
 export default function TrackedAccountsManager({
@@ -190,6 +251,8 @@ export default function TrackedAccountsManager({
     null
   );
 
+  const [retryingKey, setRetryingKey] = useState<string | null>(null);
+
   const parsedHandle = useMemo(
     () => extractHandle(accountInput, platform),
     [accountInput, platform]
@@ -203,6 +266,7 @@ export default function TrackedAccountsManager({
   const canActuallyAdd = canAddAccounts && !addLimitReached;
   const canDeleteAny = canDeleteAccounts && accounts.length > 1;
   const canEditDisplayName = role === "OWNER" || role === "ADMIN";
+  const canRetryFailedScrapes = role === "OWNER" || role === "ADMIN";
 
   const daysUntilNextAdd = getDaysUntil(nextAvailableAddAt);
   const nextAddDateLabel = formatNorwegianDate(nextAvailableAddAt);
@@ -218,6 +282,35 @@ export default function TrackedAccountsManager({
       ...(includeJson ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${token}`,
     };
+  }
+
+  async function refreshAccounts() {
+    const headers = await getAuthHeaders(false);
+
+    const response = await fetch(`${API_URL}/social-accounts`, {
+      cache: "no-store",
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error("Kunne ikke hente oppdaterte kontoer");
+    }
+
+    const data: SocialAccountsResponse = await response.json();
+
+    if (!data.ok || !Array.isArray(data.accounts)) {
+      throw new Error("Ugyldig svar ved oppdatering av kontoer");
+    }
+
+    setAccounts(data.accounts);
+
+    if (typeof data.usage?.accountsAddedThisPeriod === "number") {
+      setAddsThisPeriod(data.usage.accountsAddedThisPeriod);
+    }
+
+    if (typeof data.usage?.nextAvailableAddAt !== "undefined") {
+      setNextAvailableAddAt(data.usage.nextAvailableAddAt ?? null);
+    }
   }
 
   useEffect(() => {
@@ -237,11 +330,7 @@ export default function TrackedAccountsManager({
   }, [successMessage]);
 
   useEffect(() => {
-    const hasPendingWork = accounts.some(
-      (account) =>
-        account.initialSyncStatus === "PENDING" ||
-        account.initialSyncStatus === "RUNNING"
-    );
+    const hasPendingWork = accounts.some(hasPendingOrRunningWork);
 
     if (!hasPendingWork) {
       return;
@@ -249,38 +338,7 @@ export default function TrackedAccountsManager({
 
     const interval = window.setInterval(async () => {
       try {
-        const headers = await getAuthHeaders(false);
-
-        const response = await fetch(
-          `${API_URL}/social-accounts/initial-sync-status`,
-          {
-            cache: "no-store",
-            headers,
-          }
-        );
-
-        if (!response.ok) {
-          return;
-        }
-
-        const data: InitialSyncStatusResponse = await response.json();
-
-        if (!data.ok || !Array.isArray(data.accounts)) {
-          return;
-        }
-
-        const statusMap = new Map(
-          data.accounts.map((account) => [account.id, account.initialSyncStatus])
-        );
-
-        setAccounts((prev) =>
-          prev.map((account) => {
-            const nextStatus = statusMap.get(account.id);
-            return nextStatus
-              ? { ...account, initialSyncStatus: nextStatus }
-              : account;
-          })
-        );
+        await refreshAccounts();
       } catch {
       }
     }, 12000);
@@ -351,6 +409,8 @@ export default function TrackedAccountsManager({
           ? "Konto aktivert igjen og initial scrape startet."
           : "Konto lagt til og initial scrape startet."
       );
+
+      await refreshAccounts();
     } catch {
       setError("Noe gikk galt da kontoen skulle legges til.");
     } finally {
@@ -405,7 +465,7 @@ export default function TrackedAccountsManager({
 
       setAccounts((prev) =>
         prev.map((account) =>
-          account.id === accountId ? data.socialAccount! : account
+          account.id === accountId ? { ...account, ...data.socialAccount! } : account
         )
       );
 
@@ -476,6 +536,96 @@ export default function TrackedAccountsManager({
       setError("Noe gikk galt da kontoen skulle fjernes.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleRetry(account: SocialAccount, jobType: RetryableJobType) {
+    setError("");
+    setSuccessMessage("");
+
+    if (!canRetryFailedScrapes) {
+      setError("Kun owner eller admin kan restarte feilet scraping.");
+      return;
+    }
+
+    const retryKey = `${account.id}:${jobType}`;
+
+    try {
+      setRetryingKey(retryKey);
+
+      const headers = await getAuthHeaders();
+
+      const response = await fetch(`${API_URL}/social-accounts/${account.id}/retry`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          jobType,
+        }),
+      });
+
+      const data: RetryScrapeResponse = await response.json();
+
+      if (!response.ok) {
+        setError(data.error || "Kunne ikke restarte scraping.");
+        return;
+      }
+
+      setAccounts((prev) =>
+        prev.map((item) => {
+          if (item.id !== account.id) {
+            return item;
+          }
+
+          if (jobType === "INITIAL") {
+            return {
+              ...item,
+              initialSyncStatus: "PENDING" as const,
+              latestInitialJob: data.retry?.queuedJob ?? {
+                id: `temp-initial-${item.id}`,
+                type: "INITIAL",
+                status: "PENDING",
+                errorMessage: null,
+                createdAt: new Date().toISOString(),
+                startedAt: null,
+                finishedAt: null,
+              },
+              retry: {
+                ...item.retry,
+                canRetryInitial: false,
+              },
+            };
+          }
+
+          return {
+            ...item,
+            latestDailyJob: data.retry?.queuedJob ?? {
+              id: `temp-daily-${item.id}`,
+              type: "DAILY",
+              status: "PENDING",
+              errorMessage: null,
+              createdAt: new Date().toISOString(),
+              startedAt: null,
+              finishedAt: null,
+            },
+            retry: {
+              ...item.retry,
+              canRetryDaily: false,
+            },
+          };
+        })
+      );
+
+      setSuccessMessage(
+        jobType === "INITIAL"
+          ? "Initial scraping er startet på nytt."
+          : "Daglig data-innhenting er startet på nytt."
+      );
+
+      await refreshAccounts();
+    } catch {
+      setError("Noe gikk galt da scraping skulle restartes.");
+    } finally {
+      setRetryingKey(null);
     }
   }
 
@@ -787,11 +937,13 @@ export default function TrackedAccountsManager({
                   {accounts.map((account) => {
                     const isEditing = editingAccountId === account.id;
                     const isSaving = savingDisplayNameId === account.id;
+                    const initialRetryKey = `${account.id}:INITIAL`;
+                    const dailyRetryKey = `${account.id}:DAILY`;
 
                     return (
                       <tr key={account.id}>
                         <td
-                          className="border-b px-4 py-4 text-left"
+                          className="border-b px-4 py-4 text-left align-top"
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           <span
@@ -806,7 +958,7 @@ export default function TrackedAccountsManager({
                         </td>
 
                         <td
-                          className="border-b px-4 py-4 text-left"
+                          className="border-b px-4 py-4 text-left align-top"
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           <div className="flex flex-col gap-2">
@@ -889,21 +1041,116 @@ export default function TrackedAccountsManager({
                         </td>
 
                         <td
-                          className="border-b px-4 py-4 text-left"
+                          className="border-b px-4 py-4 text-left align-top"
                           style={{ borderColor: "var(--color-border)" }}
                         >
-                          <span
-                            className={[
-                              "inline-flex rounded-full border px-3 py-1 text-[11px] font-semibold",
-                              getInitialSyncBadgeClasses(account.initialSyncStatus),
-                            ].join(" ")}
-                          >
-                            {getInitialSyncLabel(account.initialSyncStatus)}
-                          </span>
+                          <div className="flex flex-col gap-3">
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className="text-[11px] font-semibold uppercase tracking-wide"
+                                style={{ color: "var(--color-muted)" }}
+                              >
+                                Initial scraping
+                              </span>
+                              <div className="flex flex-col gap-2">
+                                <span
+                                  className={[
+                                    "inline-flex w-fit rounded-full border px-3 py-1 text-[11px] font-semibold",
+                                    getInitialSyncBadgeClasses(account.initialSyncStatus),
+                                  ].join(" ")}
+                                >
+                                  {getInitialSyncLabel(account.initialSyncStatus)}
+                                </span>
+
+                                {account.retry.canRetryInitial && canRetryFailedScrapes ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRetry(account, "INITIAL")}
+                                    disabled={retryingKey === initialRetryKey}
+                                    className="inline-flex w-fit items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                                    style={{
+                                      borderColor: "var(--color-border)",
+                                      backgroundColor: "var(--color-surface)",
+                                      color: "var(--color-text)",
+                                    }}
+                                  >
+                                    {retryingKey === initialRetryKey
+                                      ? "Starter..."
+                                      : "Prøv igjen"}
+                                  </button>
+                                ) : null}
+
+                                {account.latestInitialJob?.status === "FAILED" &&
+                                account.latestInitialJob.errorMessage ? (
+                                  <p
+                                    className="max-w-[260px] text-xs leading-5"
+                                    style={{ color: "var(--color-muted)" }}
+                                  >
+                                    {account.latestInitialJob.errorMessage}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-1">
+                              <span
+                                className="text-[11px] font-semibold uppercase tracking-wide"
+                                style={{ color: "var(--color-muted)" }}
+                              >
+                                Siste daglige data-innhenting
+                              </span>
+                              <div className="flex flex-col gap-2">
+                                {account.latestDailyJob ? (
+                                  <>
+                                    <span
+                                      className={[
+                                        "inline-flex w-fit rounded-full border px-3 py-1 text-[11px] font-semibold",
+                                        getJobBadgeClasses(account.latestDailyJob.status),
+                                      ].join(" ")}
+                                    >
+                                      {getJobStatusLabel(account.latestDailyJob.status)}
+                                    </span>
+
+                                    {account.retry.canRetryDaily && canRetryFailedScrapes ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRetry(account, "DAILY")}
+                                        disabled={retryingKey === dailyRetryKey}
+                                        className="inline-flex w-fit items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                                        style={{
+                                          borderColor: "var(--color-border)",
+                                          backgroundColor: "var(--color-surface)",
+                                          color: "var(--color-text)",
+                                        }}
+                                      >
+                                        {retryingKey === dailyRetryKey
+                                          ? "Starter..."
+                                          : "Prøv igjen"}
+                                      </button>
+                                    ) : null}
+
+                                    {account.latestDailyJob.status === "FAILED" &&
+                                    account.latestDailyJob.errorMessage ? (
+                                      <p
+                                        className="max-w-[260px] text-xs leading-5"
+                                        style={{ color: "var(--color-muted)" }}
+                                      >
+                                        {account.latestDailyJob.errorMessage}
+                                      </p>
+                                    ) : null}
+                                  </>
+                                ) : (
+                                  <span style={{ color: "var(--color-muted)" }}>
+                                    Ikke kjørt ennå
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
                         </td>
 
                         <td
-                          className="border-b px-4 py-4 text-left"
+                          className="border-b px-4 py-4 text-left align-top"
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           {account.profileUrl ? (
@@ -924,7 +1171,7 @@ export default function TrackedAccountsManager({
                         </td>
 
                         <td
-                          className="border-b px-4 py-4 text-right"
+                          className="border-b px-4 py-4 text-right align-top"
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           <button

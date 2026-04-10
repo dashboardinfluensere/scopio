@@ -5,6 +5,16 @@ import { getServerApiUrl } from "../../../lib/api";
 
 const API_URL = getServerApiUrl();
 
+type LatestJobSummary = {
+  id: string;
+  type: "INITIAL" | "DAILY";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+};
+
 type SocialAccount = {
   id: string;
   platform: "TIKTOK" | "INSTAGRAM";
@@ -15,6 +25,12 @@ type SocialAccount = {
   initialSyncStatus: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
   isActive: boolean;
   createdAt: string;
+  latestInitialJob: LatestJobSummary | null;
+  latestDailyJob: LatestJobSummary | null;
+  retry: {
+    canRetryInitial: boolean;
+    canRetryDaily: boolean;
+  };
 };
 
 type SocialAccountsResponse = {
@@ -25,6 +41,7 @@ type SocialAccountsResponse = {
   permissions: {
     canAddAccounts: boolean;
     canDeleteAccounts: boolean;
+    canRetryFailedScrapes?: boolean;
   };
   limits: {
     monthlyAccountAdds: number;

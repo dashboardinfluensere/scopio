@@ -819,10 +819,29 @@ async function canRunJob(job: {
     socialAccount.lastSyncedAt &&
     Date.now() - socialAccount.lastSyncedAt.getTime() < cooldownMs
   ) {
-    return {
-      ok: false,
-      reason: "Cooldown aktiv for denne kontoen.",
-    };
+    const latestFailedJobAfterLastSync = await prisma.scrapeJob.findFirst({
+      where: {
+        socialAccountId: job.socialAccountId,
+        type: job.type,
+        status: ScrapeJobStatus.FAILED,
+        createdAt: {
+          gt: socialAccount.lastSyncedAt,
+        },
+      },
+      select: {
+        id: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    if (!latestFailedJobAfterLastSync) {
+      return {
+        ok: false,
+        reason: "Cooldown aktiv for denne kontoen.",
+      };
+    }
   }
 
   return {
@@ -1478,6 +1497,13 @@ async function claimNextPendingJob() {
 
   if (claimed.count === 0) {
     return null;
+  }
+
+  if (nextJob.type === ScrapeJobType.INITIAL) {
+    await markInitialSyncStatusIfAccountExists(
+      nextJob.socialAccountId,
+      InitialSyncStatus.RUNNING
+    );
   }
 
   infoLog(

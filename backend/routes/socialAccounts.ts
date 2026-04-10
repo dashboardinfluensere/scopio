@@ -17,6 +17,7 @@ import {
 import {
   socialAccountsWriteLimiter,
   initialSubmitLimiter,
+  retryScrapeLimiter,
 } from "../middleware/rateLimiters";
 import { getActiveOrganizationAccess } from "../services/getActiveOrganizationAccess";
 import { hasRole } from "../services/hasRole";
@@ -42,6 +43,24 @@ type InitialSubmitBodyItem = {
   profileUrl?: unknown;
 };
 
+type RetryJobBody = {
+  jobType?: unknown;
+};
+
+type LatestJobSummary = {
+  id: string;
+  type: ScrapeJobType;
+  status: ScrapeJobStatus;
+  errorMessage: string | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+};
+
+type LatestJobSummaryWithAccountId = LatestJobSummary & {
+  socialAccountId: string;
+};
+
 function getAuthenticatedClerkUserId(req: AuthenticatedRequest): string | null {
   return req.auth?.clerkUserId ?? req.auth?.userId ?? null;
 }
@@ -51,6 +70,10 @@ function isValidPlatform(value: unknown): value is Platform {
     typeof value === "string" &&
     Object.values(Platform).includes(value as Platform)
   );
+}
+
+function isRetryableJobType(value: unknown): value is ScrapeJobType {
+  return value === ScrapeJobType.INITIAL || value === ScrapeJobType.DAILY;
 }
 
 function normalizeAccountHandle(input: string, platform: Platform): string {
@@ -132,6 +155,103 @@ function getNextAvailableAddAtFromOldest(oldestCreatedAt: Date | null) {
   return nextAvailable;
 }
 
+function toLatestJobSummary(job: LatestJobSummary | null | undefined) {
+  if (!job) {
+    return null;
+  }
+
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    errorMessage: job.errorMessage,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+  };
+}
+
+async function getLatestJobsForAccounts(
+  organizationId: string,
+  accountIds: string[]
+) {
+  if (accountIds.length === 0) {
+    return {
+      latestInitialJobByAccountId: new Map<
+        string,
+        LatestJobSummaryWithAccountId
+      >(),
+      latestDailyJobByAccountId: new Map<string, LatestJobSummaryWithAccountId>(),
+    };
+  }
+
+  const [initialJobs, dailyJobs] = await Promise.all([
+    prisma.scrapeJob.findMany({
+      where: {
+        organizationId,
+        socialAccountId: {
+          in: accountIds,
+        },
+        type: ScrapeJobType.INITIAL,
+      },
+      select: {
+        id: true,
+        socialAccountId: true,
+        type: true,
+        status: true,
+        errorMessage: true,
+        createdAt: true,
+        startedAt: true,
+        finishedAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+    prisma.scrapeJob.findMany({
+      where: {
+        organizationId,
+        socialAccountId: {
+          in: accountIds,
+        },
+        type: ScrapeJobType.DAILY,
+      },
+      select: {
+        id: true,
+        socialAccountId: true,
+        type: true,
+        status: true,
+        errorMessage: true,
+        createdAt: true,
+        startedAt: true,
+        finishedAt: true,
+      },
+      orderBy: [{ createdAt: "desc" }],
+    }),
+  ]);
+
+  const latestInitialJobByAccountId = new Map<
+    string,
+    LatestJobSummaryWithAccountId
+  >();
+  const latestDailyJobByAccountId = new Map<string, LatestJobSummaryWithAccountId>();
+
+  for (const job of initialJobs) {
+    if (!latestInitialJobByAccountId.has(job.socialAccountId)) {
+      latestInitialJobByAccountId.set(job.socialAccountId, job);
+    }
+  }
+
+  for (const job of dailyJobs) {
+    if (!latestDailyJobByAccountId.has(job.socialAccountId)) {
+      latestDailyJobByAccountId.set(job.socialAccountId, job);
+    }
+  }
+
+  return {
+    latestInitialJobByAccountId,
+    latestDailyJobByAccountId,
+  };
+}
+
 router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
   try {
     const clerkUserId = getAuthenticatedClerkUserId(req);
@@ -200,6 +320,28 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
         }),
       ]);
 
+    const accountIds = accounts.map((account) => account.id);
+    const { latestInitialJobByAccountId, latestDailyJobByAccountId } =
+      await getLatestJobsForAccounts(access.organizationId, accountIds);
+
+    const mappedAccounts = accounts.map((account) => {
+      const latestInitialJob =
+        latestInitialJobByAccountId.get(account.id) ?? null;
+      const latestDailyJob = latestDailyJobByAccountId.get(account.id) ?? null;
+
+      return {
+        ...account,
+        latestInitialJob: toLatestJobSummary(latestInitialJob),
+        latestDailyJob: toLatestJobSummary(latestDailyJob),
+        retry: {
+          canRetryInitial:
+            account.initialSyncStatus === InitialSyncStatus.FAILED &&
+            latestInitialJob?.status === ScrapeJobStatus.FAILED,
+          canRetryDaily: latestDailyJob?.status === ScrapeJobStatus.FAILED,
+        },
+      };
+    });
+
     const subscription = organization?.subscription ?? null;
     const accountLimit = getMonthlyAccountAddLimitForPlan(subscription?.plan);
     const hasAccess = hasSubscriptionAccess(
@@ -214,8 +356,8 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
     return res.status(200).json({
       ok: true,
       activeOrganizationId: access.organizationId,
-      count: accounts.length,
-      accounts,
+      count: mappedAccounts.length,
+      accounts: mappedAccounts,
       subscription: subscription
         ? {
             plan: subscription.plan,
@@ -230,12 +372,15 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
           hasRole(access.role, [MemberRole.OWNER, MemberRole.ADMIN]) &&
           addsThisPeriod < accountLimit,
         canDeleteAccounts: hasRole(access.role, [MemberRole.OWNER]),
+        canRetryFailedScrapes:
+          hasAccess &&
+          hasRole(access.role, [MemberRole.OWNER, MemberRole.ADMIN]),
       },
       limits: {
         monthlyAccountAdds: accountLimit,
       },
       usage: {
-        activeAccounts: accounts.length,
+        activeAccounts: mappedAccounts.length,
         accountsAddedThisPeriod: addsThisPeriod,
         monthlyAddsRemaining: Math.max(accountLimit - addsThisPeriod, 0),
         nextAvailableAddAt,
@@ -484,7 +629,9 @@ router.post(
       await logAdminEvent({
         actorUserId: actorUser?.id ?? null,
         actorEmail: actorUser?.email ?? null,
-        action: existingAccount ? "SOCIAL_ACCOUNT_REACTIVATED" : "SOCIAL_ACCOUNT_CREATED",
+        action: existingAccount
+          ? "SOCIAL_ACCOUNT_REACTIVATED"
+          : "SOCIAL_ACCOUNT_CREATED",
         targetType: "social_account",
         targetId: result.id,
         organizationId: access.organizationId,
@@ -1109,6 +1256,261 @@ router.patch(
       return res.status(500).json({
         ok: false,
         error: "Kunne ikke oppdatere visningsnavn",
+      });
+    }
+  }
+);
+
+router.post(
+  "/:socialAccountId/retry",
+  requireAuth,
+  retryScrapeLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const clerkUserId = getAuthenticatedClerkUserId(req);
+      const socialAccountId = String(req.params.socialAccountId ?? "").trim();
+      const { jobType } = (req.body ?? {}) as RetryJobBody;
+
+      if (!clerkUserId) {
+        return res.status(401).json({
+          ok: false,
+          error: "Ikke autentisert",
+        });
+      }
+
+      if (!socialAccountId) {
+        return res.status(400).json({
+          ok: false,
+          error: "socialAccountId er påkrevd",
+        });
+      }
+
+      if (!isRetryableJobType(jobType)) {
+        return res.status(400).json({
+          ok: false,
+          error: "jobType må være INITIAL eller DAILY",
+        });
+      }
+
+      const access = await getActiveOrganizationAccess(clerkUserId);
+
+      if (!hasRole(access.role, [MemberRole.OWNER, MemberRole.ADMIN])) {
+        return res.status(403).json({
+          ok: false,
+          error: "Kun owner eller admin kan restarte feilet scraping",
+        });
+      }
+
+      const [organization, socialAccount, actorUser] = await Promise.all([
+        prisma.organization.findUnique({
+          where: {
+            id: access.organizationId,
+          },
+          include: {
+            subscription: true,
+          },
+        }),
+        prisma.socialAccount.findFirst({
+          where: {
+            id: socialAccountId,
+            organizationId: access.organizationId,
+            isActive: true,
+          },
+          select: {
+            id: true,
+            organizationId: true,
+            platform: true,
+            accountHandle: true,
+            displayName: true,
+            initialSyncStatus: true,
+            lastDailyJobCreatedAt: true,
+          },
+        }),
+        prisma.user.findFirst({
+          where: {
+            authProvider: "CLERK",
+            authProviderId: clerkUserId,
+          },
+          select: {
+            id: true,
+            email: true,
+          },
+        }),
+      ]);
+
+      if (!organization?.subscription) {
+        return res.status(404).json({
+          ok: false,
+          error: "Fant ikke aktivt workspace eller abonnement",
+        });
+      }
+
+      const subscription = organization.subscription;
+      const hasAccess = hasSubscriptionAccess(
+        subscription.status,
+        subscription.currentPeriodEnd
+      );
+
+      if (!hasAccess) {
+        return res.status(403).json({
+          ok: false,
+          error: "Workspace-et har ikke aktiv tilgang til scraping",
+        });
+      }
+
+      if (!socialAccount) {
+        return res.status(404).json({
+          ok: false,
+          error: "Fant ikke konto for aktivt workspace",
+        });
+      }
+
+      const existingQueuedOrRunningJob = await prisma.scrapeJob.findFirst({
+        where: {
+          organizationId: access.organizationId,
+          socialAccountId,
+          type: jobType,
+          status: {
+            in: [ScrapeJobStatus.PENDING, ScrapeJobStatus.RUNNING],
+          },
+        },
+        select: {
+          id: true,
+          status: true,
+        },
+      });
+
+      if (existingQueuedOrRunningJob) {
+        return res.status(409).json({
+          ok: false,
+          error: "Det finnes allerede en aktiv scraping-jobb for denne kontoen",
+        });
+      }
+
+      const latestJob = await prisma.scrapeJob.findFirst({
+        where: {
+          organizationId: access.organizationId,
+          socialAccountId,
+          type: jobType,
+        },
+        select: {
+          id: true,
+          type: true,
+          status: true,
+          errorMessage: true,
+          createdAt: true,
+          startedAt: true,
+          finishedAt: true,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+      });
+
+      if (!latestJob || latestJob.status !== ScrapeJobStatus.FAILED) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            jobType === ScrapeJobType.INITIAL
+              ? "Kun feilet initial scraping kan restartes"
+              : "Kun feilet daglig data-innhenting kan restartes",
+        });
+      }
+
+      if (
+        jobType === ScrapeJobType.INITIAL &&
+        socialAccount.initialSyncStatus !== InitialSyncStatus.FAILED
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Initial scraping er ikke markert som feilet for denne kontoen",
+        });
+      }
+
+      const newJob = await prisma.$transaction(async (tx) => {
+        const createdJob = await tx.scrapeJob.create({
+          data: {
+            organizationId: access.organizationId,
+            socialAccountId,
+            type: jobType,
+            status: ScrapeJobStatus.PENDING,
+            scheduledFor: new Date(),
+            priority: jobType === ScrapeJobType.INITIAL ? 120 : 80,
+          },
+          select: {
+            id: true,
+            type: true,
+            status: true,
+            errorMessage: true,
+            createdAt: true,
+            startedAt: true,
+            finishedAt: true,
+          },
+        });
+
+        if (jobType === ScrapeJobType.INITIAL) {
+          await tx.socialAccount.update({
+            where: {
+              id: socialAccountId,
+            },
+            data: {
+              initialSyncStatus: InitialSyncStatus.PENDING,
+              needsInitialSync: true,
+            },
+          });
+        }
+
+        if (jobType === ScrapeJobType.DAILY) {
+          await tx.socialAccount.update({
+            where: {
+              id: socialAccountId,
+            },
+            data: {
+              lastDailyJobCreatedAt: new Date(),
+            },
+          });
+        }
+
+        return createdJob;
+      });
+
+      await logAdminEvent({
+        actorUserId: actorUser?.id ?? null,
+        actorEmail: actorUser?.email ?? null,
+        action:
+          jobType === ScrapeJobType.INITIAL
+            ? "SOCIAL_ACCOUNT_INITIAL_RETRY_QUEUED"
+            : "SOCIAL_ACCOUNT_DAILY_RETRY_QUEUED",
+        targetType: "social_account",
+        targetId: socialAccount.id,
+        organizationId: access.organizationId,
+        metadata: {
+          platform: socialAccount.platform,
+          accountHandle: socialAccount.accountHandle,
+          displayName: socialAccount.displayName,
+          retriedJobType: jobType,
+          previousFailedJobId: latestJob.id,
+          newJobId: newJob.id,
+        },
+      });
+
+      return res.status(200).json({
+        ok: true,
+        message:
+          jobType === ScrapeJobType.INITIAL
+            ? "Initial scraping er lagt i kø på nytt"
+            : "Daglig data-innhenting er lagt i kø på nytt",
+        retry: {
+          jobType,
+          queuedJob: toLatestJobSummary(newJob),
+        },
+      });
+    } catch (error) {
+      console.error("Retry social account scrape error:", error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Kunne ikke restarte scraping",
       });
     }
   }
