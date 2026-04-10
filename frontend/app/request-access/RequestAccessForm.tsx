@@ -147,8 +147,8 @@ export default function RequestAccessForm({
         {isLocked
           ? "Forespørsel sendt"
           : isSubmitting
-          ? "Sender..."
-          : "Send forespørsel"}
+            ? "Sender..."
+            : "Send forespørsel"}
       </button>
     </form>
   );

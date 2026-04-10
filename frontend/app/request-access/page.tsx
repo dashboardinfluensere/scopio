@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { getServerApiUrl } from "../../lib/api";
 import RequestAccessForm from "./RequestAccessForm";
+import RequestAccessBackButton from "./RequestAccessBackButton";
 
 const API_URL = getServerApiUrl();
 
@@ -44,7 +45,7 @@ async function getViewer() {
   });
 
   if (!res.ok) {
-    throw new Error(`Kunne ikke hente brukerdata. Status: ${res.status}`);
+    throw new Error(`Kunbe ikke hente brukerdata. Status: ${res.status}`);
   }
 
   return res.json() as Promise<ViewerResponse>;
@@ -95,12 +96,7 @@ export default async function RequestAccessPage() {
             </div>
           </Link>
 
-          <Link
-            href="/sign-out?redirect_url=/"
-            className="text-sm font-medium text-[#64748B] transition hover:text-[#0F172A]"
-          >
-            Logg ut og gå tilbake
-          </Link>
+          <RequestAccessBackButton />
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
