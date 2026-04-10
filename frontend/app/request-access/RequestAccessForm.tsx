@@ -3,7 +3,6 @@
 import { useState } from "react";
 
 type Props = {
-  defaultName: string;
   defaultEmail: string;
   requestStatus: "PENDING" | "APPROVED" | "REJECTED" | "COMPLETED" | null;
 };
@@ -13,7 +12,6 @@ type FormState = {
 };
 
 export default function RequestAccessForm({
-  defaultName,
   defaultEmail,
   requestStatus,
 }: Props) {
@@ -33,9 +31,13 @@ export default function RequestAccessForm({
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+
+    if (requestStatus === "PENDING") {
+      return;
+    }
+
     setError("");
     setSuccessMessage("");
-
     setIsSubmitting(true);
 
     try {
@@ -68,25 +70,10 @@ export default function RequestAccessForm({
     }
   }
 
+  const isLocked = requestStatus === "PENDING";
+
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
-      <div>
-        <label
-          htmlFor="name"
-          className="mb-2 block text-sm font-medium text-[#0F172A]"
-        >
-          Navn
-        </label>
-        <input
-          id="name"
-          name="name"
-          defaultValue={defaultName}
-          placeholder="Ditt navn"
-          className="h-12 w-full rounded-xl border border-[#E5E7EB] bg-[#F1F5F9] px-4 text-sm outline-none"
-          readOnly
-        />
-      </div>
-
       <div>
         <label
           htmlFor="email"
@@ -98,11 +85,15 @@ export default function RequestAccessForm({
           id="email"
           name="email"
           type="email"
-          defaultValue={defaultEmail}
-          placeholder="navn@epost.no"
-          className="h-12 w-full rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] px-4 text-sm text-[#475569] outline-none"
+          value={defaultEmail}
           readOnly
+          aria-readonly="true"
+          className="h-12 w-full cursor-not-allowed rounded-xl border border-[#CBD5E1] bg-[#F1F5F9] px-4 text-sm text-[#475569] outline-none"
         />
+        <p className="mt-2 text-xs leading-5 text-[#64748B]">
+          Denne e-posten er hentet fra kontoen du er logget inn med og kan ikke
+          endres her.
+        </p>
       </div>
 
       <div>
@@ -119,7 +110,8 @@ export default function RequestAccessForm({
           value={form.note}
           onChange={(e) => updateField("note", e.target.value)}
           placeholder="Skriv kort hva du ønsker å bruke Scopio til."
-          className="w-full rounded-xl border border-[#E5E7EB] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#FF6A3D]"
+          disabled={isLocked || isSubmitting}
+          className="w-full rounded-xl border border-[#E5E7EB] bg-white px-4 py-3 text-sm outline-none transition focus:border-[#FF6A3D] disabled:cursor-not-allowed disabled:bg-[#F8FAFC] disabled:text-[#64748B]"
         />
       </div>
 
@@ -149,10 +141,14 @@ export default function RequestAccessForm({
 
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isSubmitting || isLocked}
         className="inline-flex h-12 w-full items-center justify-center rounded-xl bg-[#FF6A3D] px-6 text-sm font-semibold text-white transition hover:bg-[#FF5A2A] disabled:cursor-not-allowed disabled:opacity-70"
       >
-        {isSubmitting ? "Sender..." : "Send forespørsel"}
+        {isLocked
+          ? "Forespørsel sendt"
+          : isSubmitting
+          ? "Sender..."
+          : "Send forespørsel"}
       </button>
     </form>
   );

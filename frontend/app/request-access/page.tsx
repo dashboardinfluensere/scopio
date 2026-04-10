@@ -74,7 +74,6 @@ export default async function RequestAccessPage() {
   }
 
   const email = viewer?.user?.email ?? "";
-  const name = viewer?.user?.name ?? "";
   const requestStatus = viewer?.accessRequest?.status ?? null;
 
   return (
@@ -97,10 +96,10 @@ export default async function RequestAccessPage() {
           </Link>
 
           <Link
-            href="/"
+            href="/sign-out?redirect_url=/"
             className="text-sm font-medium text-[#64748B] transition hover:text-[#0F172A]"
           >
-            Tilbake
+            Logg ut og gå tilbake
           </Link>
         </div>
 
@@ -169,13 +168,12 @@ export default async function RequestAccessPage() {
                 Send inn tilgangsforespørsel
               </h2>
               <p className="mt-3 text-sm leading-7 text-[#64748B]">
-                Her sender du bare inn e-post og kommentar. Plan og workspace tar
-                du etter godkjenning.
+                Her sender du bare inn en kort kommentar. E-posten hentes fra
+                kontoen du er logget inn med.
               </p>
             </div>
 
             <RequestAccessForm
-              defaultName={name}
               defaultEmail={email}
               requestStatus={requestStatus}
             />
