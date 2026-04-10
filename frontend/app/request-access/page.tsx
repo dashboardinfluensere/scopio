@@ -97,10 +97,10 @@ export default async function RequestAccessPage() {
           </Link>
 
           <Link
-            href="/sign-out"
+            href="/"
             className="text-sm font-medium text-[#64748B] transition hover:text-[#0F172A]"
           >
-            Bytt konto
+            Tilbake
           </Link>
         </div>
 
