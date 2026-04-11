@@ -18,10 +18,9 @@ import {
 } from "./apify";
 import { logAdminEvent } from "./adminLogs";
 
-const INITIAL_RESULTS_LIMIT = 200;
-const DAILY_RESULTS_LIMIT = 50;
 const WORKER_INTERVAL_MS = 30000;
 
+const DAILY_WINDOW_DAYS = 7;
 const DAILY_COOLDOWN_MS = 6 * 60 * 60 * 1000;
 const INITIAL_COOLDOWN_MS = 30 * 60 * 1000;
 const MAX_JOB_ATTEMPTS = 3;
@@ -241,6 +240,15 @@ function getInitialSyncWindowDays(subscription: {
   }
 
   return 90;
+}
+
+function getDaysToFetch(params: {
+  jobType: ScrapeJobType;
+  initialWindowDays: number;
+}) {
+  return params.jobType === ScrapeJobType.INITIAL
+    ? params.initialWindowDays
+    : DAILY_WINDOW_DAYS;
 }
 
 async function getOrganizationSubscriptionOrThrow(organizationId: string) {
@@ -993,40 +1001,36 @@ async function processTikTokJob(job: {
   let importRunId: string | null = null;
 
   try {
-    const resultsLimit =
-      job.type === ScrapeJobType.INITIAL ? INITIAL_RESULTS_LIMIT : DAILY_RESULTS_LIMIT;
-
-    const rawPosts = await runApifyTaskForProfile(
-      job.socialAccount.accountHandle,
-      resultsLimit
-    );
-
     const subscription = await getOrganizationSubscriptionOrThrow(
       job.organizationId
     );
     const initialWindowDays = getInitialSyncWindowDays(subscription);
+    const daysToFetch = getDaysToFetch({
+      jobType: job.type,
+      initialWindowDays,
+    });
+
+    const rawPosts = await runApifyTaskForProfile(
+      job.socialAccount.accountHandle,
+      daysToFetch
+    );
 
     const posts = rawPosts.filter((post) => {
       const publishedAt = toTikTokDate(post);
-
-      if (job.type === ScrapeJobType.INITIAL) {
-        return isWithinLastXDays(publishedAt, initialWindowDays);
-      }
-
-      return isWithinLastXDays(publishedAt, 7);
+      return isWithinLastXDays(publishedAt, daysToFetch);
     });
 
     const scrapedAt = new Date();
 
     infoLog(
-      `TIKTOK ${job.type} START: @${job.socialAccount.accountHandle}, posts=${posts.length}, initialWindowDays=${initialWindowDays}`
+      `TIKTOK ${job.type} START: @${job.socialAccount.accountHandle}, raw=${rawPosts.length}, filtered=${posts.length}, daysToFetch=${daysToFetch}`
     );
 
     const importRun = await createImportRun({
       organizationId: job.organizationId,
       platform: Platform.TIKTOK,
       rowCount: posts.length,
-      note: `${job.type} TikTok scrape for @${job.socialAccount.accountHandle}`,
+      note: `${job.type} TikTok scrape for @${job.socialAccount.accountHandle} (${daysToFetch} dager)`,
     });
 
     importRunId = importRun.id;
@@ -1118,6 +1122,8 @@ async function processTikTokJob(job: {
         socialAccountId: job.socialAccountId,
         accountHandle: job.socialAccount.accountHandle,
         importedPosts: posts.length,
+        rawPosts: rawPosts.length,
+        daysToFetch,
       },
     });
   } catch (error) {
@@ -1186,18 +1192,19 @@ async function processInstagramJob(job: {
   let importRunId: string | null = null;
 
   try {
-    const resultsLimit =
-      job.type === ScrapeJobType.INITIAL ? INITIAL_RESULTS_LIMIT : DAILY_RESULTS_LIMIT;
-
-    const rawPosts = await runApifyInstagramTaskForProfile(
-      job.socialAccount.accountHandle,
-      resultsLimit
-    );
-
     const subscription = await getOrganizationSubscriptionOrThrow(
       job.organizationId
     );
     const initialWindowDays = getInitialSyncWindowDays(subscription);
+    const daysToFetch = getDaysToFetch({
+      jobType: job.type,
+      initialWindowDays,
+    });
+
+    const rawPosts = await runApifyInstagramTaskForProfile(
+      job.socialAccount.accountHandle,
+      daysToFetch
+    );
 
     const cleanedHandle = job.socialAccount.accountHandle
       .replace(/^@/, "")
@@ -1211,25 +1218,20 @@ async function processInstagramJob(job: {
       }
 
       const publishedAt = toInstagramDate(post);
-
-      if (job.type === ScrapeJobType.INITIAL) {
-        return isWithinLastXDays(publishedAt, initialWindowDays);
-      }
-
-      return isWithinLastXDays(publishedAt, 7);
+      return isWithinLastXDays(publishedAt, daysToFetch);
     });
 
     const scrapedAt = new Date();
 
     infoLog(
-      `INSTAGRAM ${job.type} START: @${job.socialAccount.accountHandle}, raw=${rawPosts.length}, filtered=${posts.length}, initialWindowDays=${initialWindowDays}`
+      `INSTAGRAM ${job.type} START: @${job.socialAccount.accountHandle}, raw=${rawPosts.length}, filtered=${posts.length}, daysToFetch=${daysToFetch}`
     );
 
     const importRun = await createImportRun({
       organizationId: job.organizationId,
       platform: Platform.INSTAGRAM,
       rowCount: posts.length,
-      note: `${job.type} Instagram scrape for @${job.socialAccount.accountHandle}`,
+      note: `${job.type} Instagram scrape for @${job.socialAccount.accountHandle} (${daysToFetch} dager)`,
     });
 
     importRunId = importRun.id;
@@ -1323,6 +1325,8 @@ async function processInstagramJob(job: {
         socialAccountId: job.socialAccountId,
         accountHandle: job.socialAccount.accountHandle,
         importedPosts: posts.length,
+        rawPosts: rawPosts.length,
+        daysToFetch,
       },
     });
   } catch (error) {

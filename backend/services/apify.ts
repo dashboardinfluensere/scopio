@@ -72,17 +72,38 @@ export type ApifyInstagramPost = {
   errorDescription?: string;
 };
 
+function getStartDateISOString(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+}
+
+function getSafeResultsLimit(days: number) {
+  if (days <= 7) {
+    return 30;
+  }
+
+  if (days <= 30) {
+    return 80;
+  }
+
+  return 150;
+}
+
 export async function runApifyTaskForProfile(
   profileHandle: string,
-  resultsPerPage: number
+  days: number
 ) {
   const cleanedHandle = profileHandle.trim().replace(/^@/, "");
+  const startDate = getStartDateISOString(days);
+  const resultsPerPage = getSafeResultsLimit(days);
 
   const input = {
     profiles: [cleanedHandle],
     resultsPerPage,
     profileScrapeSections: ["videos"],
     profileSorting: "latest",
+    since: startDate,
 
     commentsPerPost: 0,
     excludePinnedPosts: false,
@@ -113,9 +134,11 @@ export async function runApifyTaskForProfile(
 
 export async function runApifyInstagramTaskForProfile(
   profileHandle: string,
-  resultsLimit: number
+  days: number
 ) {
   const cleanedHandle = profileHandle.trim().replace(/^@/, "");
+  const startDate = getStartDateISOString(days);
+  const resultsLimit = getSafeResultsLimit(days);
 
   const input = {
     addParentData: false,
@@ -123,12 +146,10 @@ export async function runApifyInstagramTaskForProfile(
     resultsLimit,
     resultsType: "posts",
     searchLimit: 1,
+    onlyPostsNewerThan: startDate,
   };
 
-  console.log(
-    "INSTAGRAM APIFY INPUT:",
-    JSON.stringify(input, null, 2)
-  );
+  console.log("INSTAGRAM APIFY INPUT:", JSON.stringify(input, null, 2));
 
   const run = await client.actor(INSTAGRAM_ACTOR_ID).call(input);
   const { items } = await client.dataset(run.defaultDatasetId).listItems();
