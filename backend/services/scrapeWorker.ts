@@ -1211,7 +1211,9 @@ async function processInstagramJob(job: {
       .toLowerCase();
 
     const posts = rawPosts.filter((post) => {
-      const owner = post.ownerUsername?.trim().toLowerCase();
+      const owner =
+        post.ownerUsername?.trim().toLowerCase() ||
+        post.owner?.username?.trim().toLowerCase();
 
       if (!owner || owner !== cleanedHandle) {
         return false;
