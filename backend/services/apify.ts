@@ -78,17 +78,27 @@ function getStartDateISOString(days: number) {
   return date.toISOString();
 }
 
+/**
+ * 🔥 NY LOGIKK:
+ * 7 dager → 30
+ * 30 dager → 90
+ * 90 dager → 270
+ */
 function getSafeResultsLimit(days: number) {
   if (days <= 7) {
     return 30;
   }
 
   if (days <= 30) {
-    return 80;
+    return 90;
   }
 
-  return 150;
+  return 270;
 }
+
+/* =========================
+   TIKTOK
+========================= */
 
 export async function runApifyTaskForProfile(
   profileHandle: string,
@@ -131,6 +141,10 @@ export async function runApifyTaskForProfile(
     return !author || author === cleanedHandle.toLowerCase();
   });
 }
+
+/* =========================
+   INSTAGRAM
+========================= */
 
 export async function runApifyInstagramTaskForProfile(
   profileHandle: string,
