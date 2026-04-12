@@ -78,14 +78,21 @@ function getStartDateISOString(days: number) {
   return date.toISOString();
 }
 
-/**
- * 7 dager  -> 15
- * 30 dager -> 90
- * 90 dager -> 270
- */
-function getSafeResultsLimit(days: number) {
+function getTikTokDefaultResultsLimit(days: number) {
   if (days <= 7) {
-    return 15;
+    return 30;
+  }
+
+  if (days <= 30) {
+    return 90;
+  }
+
+  return 270;
+}
+
+function getInstagramResultsLimit(days: number) {
+  if (days <= 7) {
+    return 30;
   }
 
   if (days <= 30) {
@@ -107,7 +114,7 @@ export async function runApifyTaskForProfile(
   const cleanedHandle = profileHandle.trim().replace(/^@/, "");
   const startDate = getStartDateISOString(days);
   const resultsPerPage =
-    resultsPerPageOverride ?? getSafeResultsLimit(days);
+    resultsPerPageOverride ?? getTikTokDefaultResultsLimit(days);
 
   const input = {
     profiles: [cleanedHandle],
@@ -153,7 +160,7 @@ export async function runApifyInstagramTaskForProfile(
 ) {
   const cleanedHandle = profileHandle.trim().replace(/^@/, "");
   const startDate = getStartDateISOString(days);
-  const resultsLimit = getSafeResultsLimit(days);
+  const resultsLimit = getInstagramResultsLimit(days);
 
   const input = {
     addParentData: false,
