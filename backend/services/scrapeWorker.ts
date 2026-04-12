@@ -1010,20 +1010,39 @@ async function processTikTokJob(job: {
       initialWindowDays,
     });
 
-    const rawPosts = await runApifyTaskForProfile(
+    const isDailyJob = job.type === ScrapeJobType.DAILY;
+
+    let rawPosts = await runApifyTaskForProfile(
       job.socialAccount.accountHandle,
-      daysToFetch
+      daysToFetch,
+      isDailyJob ? 15 : undefined
     );
 
-    const posts = rawPosts.filter((post) => {
+    let posts = rawPosts.filter((post) => {
       const publishedAt = toTikTokDate(post);
       return isWithinLastXDays(publishedAt, daysToFetch);
     });
 
+    if (isDailyJob && posts.length === 15) {
+      const fallbackRawPosts = await runApifyTaskForProfile(
+        job.socialAccount.accountHandle,
+        daysToFetch,
+        30
+      );
+
+      const fallbackPosts = fallbackRawPosts.filter((post) => {
+        const publishedAt = toTikTokDate(post);
+        return isWithinLastXDays(publishedAt, daysToFetch);
+      });
+
+      rawPosts = fallbackRawPosts;
+      posts = fallbackPosts;
+    }
+
     const scrapedAt = new Date();
 
     infoLog(
-      `TIKTOK ${job.type} START: @${job.socialAccount.accountHandle}, raw=${rawPosts.length}, filtered=${posts.length}, daysToFetch=${daysToFetch}`
+      `TIKTOK ${job.type}: @${job.socialAccount.accountHandle}, apifyRaw=${rawPosts.length}, keptAfterBackendFilter=${posts.length}, daysToFetch=${daysToFetch}`
     );
 
     const importRun = await createImportRun({

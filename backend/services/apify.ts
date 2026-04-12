@@ -79,14 +79,13 @@ function getStartDateISOString(days: number) {
 }
 
 /**
- * 🔥 NY LOGIKK:
- * 7 dager → 30
- * 30 dager → 90
- * 90 dager → 270
+ * 7 dager  -> 15
+ * 30 dager -> 90
+ * 90 dager -> 270
  */
 function getSafeResultsLimit(days: number) {
   if (days <= 7) {
-    return 30;
+    return 15;
   }
 
   if (days <= 30) {
@@ -102,18 +101,20 @@ function getSafeResultsLimit(days: number) {
 
 export async function runApifyTaskForProfile(
   profileHandle: string,
-  days: number
+  days: number,
+  resultsPerPageOverride?: number
 ) {
   const cleanedHandle = profileHandle.trim().replace(/^@/, "");
   const startDate = getStartDateISOString(days);
-  const resultsPerPage = getSafeResultsLimit(days);
+  const resultsPerPage =
+    resultsPerPageOverride ?? getSafeResultsLimit(days);
 
   const input = {
     profiles: [cleanedHandle],
     resultsPerPage,
     profileScrapeSections: ["videos"],
     profileSorting: "latest",
-    since: startDate,
+    oldestPostDateUnified: startDate,
 
     commentsPerPost: 0,
     excludePinnedPosts: false,
