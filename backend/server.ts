@@ -73,6 +73,19 @@ const MAX_DAILY_JOBS_PER_SCHEDULE_RUN = Math.max(
   Number(process.env.MAX_DAILY_JOBS_PER_SCHEDULE_RUN ?? 300)
 );
 
+/**
+ * Hvor ofte vi skal sjekke om dagens DAILY-run ble misset.
+ * Nyttig på Render Free, der serveren kan sove gjennom 08:00.
+ */
+const DAILY_SCHEDULE_CATCHUP_INTERVAL_MS = Math.max(
+  60_000,
+  Number(process.env.DAILY_SCHEDULE_CATCHUP_INTERVAL_MS ?? 10 * 60 * 1000)
+);
+
+const DAILY_SCHEDULE_LOG_ACTION = "DAILY_SCRAPE_SCHEDULE_RUN";
+
+let isDailyScheduleRunInProgress = false;
+
 function getAuthenticatedClerkUserId(req: AuthenticatedRequest): string | null {
   return req.auth?.clerkUserId ?? req.auth?.userId ?? null;
 }
@@ -98,6 +111,235 @@ function parseAllowedOrigins() {
         .filter(Boolean)
     )
   );
+}
+
+function getOsloDateParts(date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Oslo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const parts = formatter.formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    year: Number(lookup.year),
+    month: Number(lookup.month),
+    day: Number(lookup.day),
+    hour: Number(lookup.hour),
+    minute: Number(lookup.minute),
+    dateKey: `${lookup.year}-${lookup.month}-${lookup.day}`,
+  };
+}
+
+async function hasDailyScheduleRunExecutedToday(dateKey: string) {
+  const existingLog = await prisma.adminLog.findFirst({
+    where: {
+      actorEmail: "system:daily-scheduler",
+      action: DAILY_SCHEDULE_LOG_ACTION,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+  });
+
+  if (!existingLog) {
+    return false;
+  }
+
+  const metadata =
+    existingLog.metadata && typeof existingLog.metadata === "object"
+      ? (existingLog.metadata as Record<string, unknown>)
+      : null;
+
+  return metadata?.dateKey === dateKey;
+}
+
+async function markDailyScheduleRunExecuted(params: {
+  dateKey: string;
+  trigger: "cron" | "startup" | "catchup";
+  createdJobs: number;
+  pendingOrRunningDailyJobs: number;
+  consideredAccounts: number;
+}) {
+  await prisma.adminLog.create({
+    data: {
+      actorUserId: null,
+      actorEmail: "system:daily-scheduler",
+      action: DAILY_SCHEDULE_LOG_ACTION,
+      targetType: "scheduler",
+      targetId: params.dateKey,
+      metadata: {
+        dateKey: params.dateKey,
+        trigger: params.trigger,
+        createdJobs: params.createdJobs,
+        pendingOrRunningDailyJobs: params.pendingOrRunningDailyJobs,
+        consideredAccounts: params.consideredAccounts,
+      },
+    },
+  });
+}
+
+async function runDailyScrapeSchedule(trigger: "cron" | "startup" | "catchup") {
+  if (isDailyScheduleRunInProgress) {
+    console.log("⏭️ Hopper over daily scheduler: kjøring pågår allerede.");
+    return;
+  }
+
+  if (!SCRAPING_ENABLED) {
+    console.log("⏸️ Daglig scraping hoppet over: SCRAPING_ENABLED=false");
+    return;
+  }
+
+  isDailyScheduleRunInProgress = true;
+
+  try {
+    const now = new Date();
+    const oslo = getOsloDateParts(now);
+
+    const alreadyRanToday = await hasDailyScheduleRunExecutedToday(oslo.dateKey);
+
+    if (alreadyRanToday) {
+      console.log(
+        `⏭️ Daily scheduler hoppet over: dagens run finnes allerede (${oslo.dateKey}).`
+      );
+      return;
+    }
+
+    const pendingOrRunningDailyJobs = await prisma.scrapeJob.count({
+      where: {
+        type: ScrapeJobType.DAILY,
+        status: {
+          in: [ScrapeJobStatus.PENDING, ScrapeJobStatus.RUNNING],
+        },
+      },
+    });
+
+    const remainingCapacity = Math.max(
+      MAX_DAILY_JOBS_PER_SCHEDULE_RUN - pendingOrRunningDailyJobs,
+      0
+    );
+
+    if (remainingCapacity <= 0) {
+      console.log(
+        `⛔ Hopper over opprettelse av DAILY jobs: hard cap nådd (${MAX_DAILY_JOBS_PER_SCHEDULE_RUN})`
+      );
+
+      await markDailyScheduleRunExecuted({
+        dateKey: oslo.dateKey,
+        trigger,
+        createdJobs: 0,
+        pendingOrRunningDailyJobs,
+        consideredAccounts: 0,
+      });
+
+      return;
+    }
+
+    const accounts = await prisma.socialAccount.findMany({
+      where: {
+        needsInitialSync: false,
+        isActive: true,
+        organization: {
+          subscription: {
+            OR: [
+              { status: SubscriptionStatus.ACTIVE },
+              {
+                status: SubscriptionStatus.TRIALING,
+                OR: [
+                  { currentPeriodEnd: null },
+                  { currentPeriodEnd: { gte: now } },
+                ],
+              },
+            ],
+          },
+        },
+      },
+      select: {
+        id: true,
+        organizationId: true,
+      },
+      take: remainingCapacity * 3,
+    });
+
+    let createdJobs = 0;
+
+    for (const account of accounts) {
+      if (createdJobs >= remainingCapacity) {
+        break;
+      }
+
+      const existingJob = await prisma.scrapeJob.findFirst({
+        where: {
+          socialAccountId: account.id,
+          organizationId: account.organizationId,
+          type: ScrapeJobType.DAILY,
+          status: {
+            in: [ScrapeJobStatus.PENDING, ScrapeJobStatus.RUNNING],
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingJob) {
+        continue;
+      }
+
+      await prisma.scrapeJob.create({
+        data: {
+          socialAccountId: account.id,
+          organizationId: account.organizationId,
+          type: ScrapeJobType.DAILY,
+          status: ScrapeJobStatus.PENDING,
+          priority: 1,
+          scheduledFor: new Date(),
+        },
+      });
+
+      createdJobs += 1;
+    }
+
+    await markDailyScheduleRunExecuted({
+      dateKey: oslo.dateKey,
+      trigger,
+      createdJobs,
+      pendingOrRunningDailyJobs,
+      consideredAccounts: accounts.length,
+    });
+
+    console.log(
+      `✅ Opprettet ${createdJobs} daglige scrape-jobs via ${trigger} (dato ${oslo.dateKey}, hard cap ${MAX_DAILY_JOBS_PER_SCHEDULE_RUN}, eksisterende pending/running: ${pendingOrRunningDailyJobs})`
+    );
+  } catch (error) {
+    console.error("❌ Feil i daily scrape:", error);
+  } finally {
+    isDailyScheduleRunInProgress = false;
+  }
+}
+
+async function maybeRunMissedDailySchedule(trigger: "startup" | "catchup") {
+  if (!RUN_SCHEDULER || !SCRAPING_ENABLED) {
+    return;
+  }
+
+  const oslo = getOsloDateParts(new Date());
+
+  /**
+   * Kjør catch-up først etter 08:00 Oslo-tid.
+   * Da unngår vi å opprette DAILY-jobs for tidlig på natta/morgenen.
+   */
+  if (oslo.hour < 8) {
+    return;
+  }
+
+  await runDailyScrapeSchedule(trigger);
 }
 
 const allowedOrigins = parseAllowedOrigins();
@@ -142,6 +384,7 @@ app.get("/health", async (_req, res) => {
       schedulerEnabled: RUN_SCHEDULER,
       scrapeWorkerEnabled: RUN_SCRAPE_WORKER,
       maxDailyJobsPerScheduleRun: MAX_DAILY_JOBS_PER_SCHEDULE_RUN,
+      dailyScheduleCatchupIntervalMs: DAILY_SCHEDULE_CATCHUP_INTERVAL_MS,
     });
   } catch (error) {
     console.error("Health check error:", error);
@@ -348,111 +591,15 @@ app.get("/posts", requireAuth, async (req: AuthenticatedRequest, res) => {
 
 /* =========================
    DAILY SCRAPE (08:00)
+   + CATCH-UP FOR FREE HOSTING
    ========================= */
 
 if (RUN_SCHEDULER) {
   cron.schedule(
     "0 8 * * *",
     async () => {
-      console.log("⏰ Starter daglig scraping...");
-
-      if (!SCRAPING_ENABLED) {
-        console.log("⏸️ Daglig scraping hoppet over: SCRAPING_ENABLED=false");
-        return;
-      }
-
-      try {
-        const now = new Date();
-
-        const pendingOrRunningDailyJobs = await prisma.scrapeJob.count({
-          where: {
-            type: ScrapeJobType.DAILY,
-            status: {
-              in: [ScrapeJobStatus.PENDING, ScrapeJobStatus.RUNNING],
-            },
-          },
-        });
-
-        const remainingCapacity = Math.max(
-          MAX_DAILY_JOBS_PER_SCHEDULE_RUN - pendingOrRunningDailyJobs,
-          0
-        );
-
-        if (remainingCapacity <= 0) {
-          console.log(
-            `⛔ Hopper over opprettelse av DAILY jobs: hard cap nådd (${MAX_DAILY_JOBS_PER_SCHEDULE_RUN})`
-          );
-          return;
-        }
-
-        const accounts = await prisma.socialAccount.findMany({
-          where: {
-            needsInitialSync: false,
-            isActive: true,
-            organization: {
-              subscription: {
-                OR: [
-                  { status: SubscriptionStatus.ACTIVE },
-                  {
-                    status: SubscriptionStatus.TRIALING,
-                    OR: [
-                      { currentPeriodEnd: null },
-                      { currentPeriodEnd: { gte: now } },
-                    ],
-                  },
-                ],
-              },
-            },
-          },
-          select: {
-            id: true,
-            organizationId: true,
-          },
-          take: remainingCapacity * 3,
-        });
-
-        let createdJobs = 0;
-
-        for (const account of accounts) {
-          if (createdJobs >= remainingCapacity) {
-            break;
-          }
-
-          const existingJob = await prisma.scrapeJob.findFirst({
-            where: {
-              socialAccountId: account.id,
-              organizationId: account.organizationId,
-              type: ScrapeJobType.DAILY,
-              status: {
-                in: [ScrapeJobStatus.PENDING, ScrapeJobStatus.RUNNING],
-              },
-            },
-            select: {
-              id: true,
-            },
-          });
-
-          if (existingJob) continue;
-
-          await prisma.scrapeJob.create({
-            data: {
-              socialAccountId: account.id,
-              organizationId: account.organizationId,
-              type: ScrapeJobType.DAILY,
-              status: ScrapeJobStatus.PENDING,
-              priority: 1,
-            },
-          });
-
-          createdJobs += 1;
-        }
-
-        console.log(
-          `✅ Opprettet ${createdJobs} daglige scrape-jobs (hard cap per kjøring: ${MAX_DAILY_JOBS_PER_SCHEDULE_RUN}, eksisterende pending/running: ${pendingOrRunningDailyJobs})`
-        );
-      } catch (error) {
-        console.error("❌ Feil i daily scrape:", error);
-      }
+      console.log("⏰ Starter daglig scraping via cron...");
+      await runDailyScrapeSchedule("cron");
     },
     { timezone: "Europe/Oslo" }
   );
@@ -498,6 +645,12 @@ app.listen(PORT, "0.0.0.0", () => {
 
   if (RUN_SCHEDULER && SCRAPING_ENABLED) {
     console.log("Daglig scheduler er aktiv.");
+
+    void maybeRunMissedDailySchedule("startup");
+
+    setInterval(() => {
+      void maybeRunMissedDailySchedule("catchup");
+    }, DAILY_SCHEDULE_CATCHUP_INTERVAL_MS);
   } else if (RUN_SCHEDULER && !SCRAPING_ENABLED) {
     console.log("Daglig scheduler er slått av via SCRAPING_ENABLED=false.");
   } else {
