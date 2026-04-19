@@ -102,18 +102,26 @@ function normalizeAccountHandle(input: string, platform: Platform): string {
   return value.replace(/^@/, "").trim().toLowerCase();
 }
 
-function getMonthlyAccountAddLimitForPlan(
-  plan: SubscriptionPlan | null | undefined
-) {
-  if (plan === SubscriptionPlan.BUSINESS) {
+function getMonthlyAccountAddLimit(params: {
+  plan: SubscriptionPlan | null | undefined;
+  status: SubscriptionStatus | null | undefined;
+}) {
+  if (
+    params.plan === SubscriptionPlan.PRO &&
+    params.status === SubscriptionStatus.TRIALING
+  ) {
+    return 1;
+  }
+
+  if (params.plan === SubscriptionPlan.BUSINESS) {
     return 4;
   }
 
-  if (plan === SubscriptionPlan.PRO) {
+  if (params.plan === SubscriptionPlan.PRO) {
     return 2;
   }
 
-  if (plan === SubscriptionPlan.STARTER) {
+  if (params.plan === SubscriptionPlan.STARTER) {
     return 1;
   }
 
@@ -343,7 +351,10 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
     });
 
     const subscription = organization?.subscription ?? null;
-    const accountLimit = getMonthlyAccountAddLimitForPlan(subscription?.plan);
+    const accountLimit = getMonthlyAccountAddLimit({
+      plan: subscription?.plan,
+      status: subscription?.status,
+    });
     const hasAccess = hasSubscriptionAccess(
       subscription?.status,
       subscription?.currentPeriodEnd
@@ -496,7 +507,10 @@ router.post(
       }
 
       const subscription = organization.subscription ?? null;
-      const addLimit = getMonthlyAccountAddLimitForPlan(subscription?.plan);
+      const addLimit = getMonthlyAccountAddLimit({
+        plan: subscription?.plan,
+        status: subscription?.status,
+      });
       const hasAccess = hasSubscriptionAccess(
         subscription?.status,
         subscription?.currentPeriodEnd
@@ -769,7 +783,10 @@ router.post(
       ]);
 
       const subscription = organization.subscription ?? null;
-      const addLimit = getMonthlyAccountAddLimitForPlan(subscription?.plan);
+      const addLimit = getMonthlyAccountAddLimit({
+        plan: subscription?.plan,
+        status: subscription?.status,
+      });
       const hasAccess = hasSubscriptionAccess(
         subscription?.status,
         subscription?.currentPeriodEnd

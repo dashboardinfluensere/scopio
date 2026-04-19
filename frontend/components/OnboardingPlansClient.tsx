@@ -38,7 +38,7 @@ const plans: PlanMeta[] = [
     features: [
       "1 konto",
       "2 medlemmer totalt",
-      "Starter med 30 dagers historikk",
+      "Starter med 90 dagers historikk",
       "Daglig sync av siste 7 dager",
     ],
   },
@@ -465,14 +465,10 @@ export default function OnboardingPlansClient({
 
                   <div className="mt-8 border-t border-[#EEF2F7] pt-6">
                     <p className="text-sm font-semibold text-[#C2410C]">
-                      {plan.key === "pro-trial"
-                        ? "Starter med 30 dager historikk"
-                        : "Starter med 90 dager historikk"}
+                      Starter med 90 dager historikk
                     </p>
                     <p className="mt-2 text-sm leading-7 text-[#9A3412]">
-                      {plan.key === "pro-trial"
-                        ? "Du får historikk fra før du startet."
-                        : "Du får mer data fra start, ikke bare nye tall fremover."}
+                      Du får mer data fra start, ikke bare nye tall fremover.
                     </p>
                   </div>
                 </button>

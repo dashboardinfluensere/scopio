@@ -228,17 +228,10 @@ function isWithinLastXDays(date: Date, days: number) {
   return date >= threshold;
 }
 
-function getInitialSyncWindowDays(subscription: {
+function getInitialSyncWindowDays(_subscription: {
   plan: SubscriptionPlan;
   status: SubscriptionStatus;
 }) {
-  if (
-    subscription.plan === SubscriptionPlan.PRO &&
-    subscription.status === SubscriptionStatus.TRIALING
-  ) {
-    return 30;
-  }
-
   return 90;
 }
 
