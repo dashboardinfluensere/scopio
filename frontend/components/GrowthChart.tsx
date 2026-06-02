@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -49,28 +50,33 @@ type GrowthChartProps = {
   selectedAccountIds: string[];
 };
 
-const ACCOUNT_COLORS = [
-  "#94A3B8",
-  "#CBD5E1",
-  "#64748B",
-  "#A855F7",
-  "#22C55E",
-  "#F59E0B",
-  "#06B6D4",
-  "#EF4444",
-];
+const CHART_COLORS = {
+  combined: "#38BDF8",
+  trend: "#E5E7EB",
+  tiktok: "#7C3AED",
+  instagram: "#FF6A3D",
+  fallback: "#94A3B8",
+  disabled: "#64748B",
+};
 
 const chartTheme = {
-  accent: "var(--color-accent, #FF6A3D)",
-  accentBadgeBg: "var(--color-accent-soft, #FFF4EF)",
+  accentBadgeBg: "rgba(56, 189, 248, 0.14)",
   surface: "var(--color-surface, #FFFFFF)",
   surfaceSoft: "var(--color-surface-soft, #F8FAFC)",
   border: "var(--color-border, #E5E7EB)",
   text: "var(--color-text, #0F172A)",
   muted: "var(--color-muted, #6B7280)",
   shadow: "0 10px 24px rgba(15, 23, 42, 0.18)",
-  trend: "var(--color-text, #0F172A)",
 };
+
+function getPlatformColor(platform?: string | null) {
+  const normalized = platform?.toLowerCase();
+
+  if (normalized === "tiktok") return CHART_COLORS.tiktok;
+  if (normalized === "instagram") return CHART_COLORS.instagram;
+
+  return CHART_COLORS.fallback;
+}
 
 function formatXAxisDate(value: string) {
   const date = new Date(value);
@@ -141,13 +147,8 @@ function getMetricKey(metric: Metric, mode: Mode) {
 function calculateTrendValues(values: number[]) {
   const n = values.length;
 
-  if (n === 0) {
-    return [];
-  }
-
-  if (n === 1) {
-    return values;
-  }
+  if (n === 0) return [];
+  if (n === 1) return values;
 
   const xMean = (n - 1) / 2;
   const yMean = values.reduce((sum, value) => sum + value, 0) / n;
@@ -207,6 +208,7 @@ function getVisibleAccounts(data: GrowthPoint[], selectedAccountIds: string[]) {
     {
       accountId: string;
       label: string;
+      platform: string;
     }
   >();
 
@@ -218,12 +220,53 @@ function getVisibleAccounts(data: GrowthPoint[], selectedAccountIds: string[]) {
         seen.set(account.accountId, {
           accountId: account.accountId,
           label: account.displayName?.trim() || account.accountHandle,
+          platform: account.platform,
         });
       }
     }
   }
 
   return Array.from(seen.values());
+}
+
+function LegendButton({
+  label,
+  color,
+  disabled,
+  onClick,
+  strong = false,
+}: {
+  label: string;
+  color: string;
+  disabled: boolean;
+  onClick: () => void;
+  strong?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        "inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs transition",
+        strong ? "font-semibold" : "font-medium",
+      ].join(" ")}
+      style={{
+        backgroundColor: disabled ? "rgba(100, 116, 139, 0.14)" : chartTheme.surfaceSoft,
+        color: disabled ? CHART_COLORS.disabled : chartTheme.muted,
+        opacity: disabled ? 0.65 : 1,
+      }}
+      title={disabled ? `Vis ${label}` : `Skjul ${label}`}
+      aria-pressed={!disabled}
+    >
+      <span
+        className="h-2.5 w-2.5 rounded-full"
+        style={{
+          backgroundColor: disabled ? CHART_COLORS.disabled : color,
+        }}
+      />
+      {label}
+    </button>
+  );
 }
 
 export default function GrowthChart({
@@ -233,64 +276,57 @@ export default function GrowthChart({
   metricLabel,
   selectedAccountIds,
 }: GrowthChartProps) {
+  const [hiddenLines, setHiddenLines] = useState<Record<string, boolean>>({});
+
   const visibleAccounts = getVisibleAccounts(data, selectedAccountIds);
   const hasMultipleAccounts = visibleAccounts.length >= 2;
   const chartData = buildChartData(data, metric, mode, hasMultipleAccounts);
   const isPercentMetric = metric === "engagement";
 
+  function toggleLine(lineKey: string) {
+    setHiddenLines((current) => ({
+      ...current,
+      [lineKey]: !current[lineKey],
+    }));
+  }
+
+  function isHidden(lineKey: string) {
+    return Boolean(hiddenLines[lineKey]);
+  }
+
   return (
     <div className="w-full">
       <div className="mb-4 flex flex-wrap items-center gap-2 md:mb-5">
         {hasMultipleAccounts ? (
-          <div
-            className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold"
-            style={{
-              backgroundColor: chartTheme.accentBadgeBg,
-              color: chartTheme.accent,
-            }}
-          >
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{ backgroundColor: chartTheme.accent }}
-            />
-            Samlet
-          </div>
+          <LegendButton
+            label="Samlet"
+            color={CHART_COLORS.combined}
+            disabled={isHidden("total")}
+            onClick={() => toggleLine("total")}
+            strong
+          />
         ) : null}
 
-        <div
-          className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium"
-          style={{
-            backgroundColor: chartTheme.surfaceSoft,
-            color: chartTheme.muted,
-          }}
-        >
-          <span
-            className="h-2.5 w-2.5 rounded-full"
-            style={{
-              backgroundColor: chartTheme.trend,
-            }}
-          />
-          Trend
-        </div>
+        <LegendButton
+          label="Trend"
+          color={CHART_COLORS.trend}
+          disabled={isHidden("trend")}
+          onClick={() => toggleLine("trend")}
+        />
 
-        {visibleAccounts.map((account, index) => (
-          <div
-            key={account.accountId}
-            className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium"
-            style={{
-              backgroundColor: chartTheme.surfaceSoft,
-              color: chartTheme.muted,
-            }}
-          >
-            <span
-              className="h-2.5 w-2.5 rounded-full"
-              style={{
-                backgroundColor: ACCOUNT_COLORS[index % ACCOUNT_COLORS.length],
-              }}
+        {visibleAccounts.map((account) => {
+          const lineKey = `account_${account.accountId}`;
+
+          return (
+            <LegendButton
+              key={account.accountId}
+              label={account.label}
+              color={getPlatformColor(account.platform)}
+              disabled={isHidden(lineKey)}
+              onClick={() => toggleLine(lineKey)}
             />
-            {account.label}
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       <div className="h-[300px] w-full sm:h-[340px] md:h-[380px]">
@@ -355,41 +391,55 @@ export default function GrowthChart({
               }}
             />
 
-            {hasMultipleAccounts ? (
+            {hasMultipleAccounts && !isHidden("total") ? (
               <Line
                 type="monotone"
                 dataKey="total"
                 name="total"
-                stroke={chartTheme.accent}
+                stroke={CHART_COLORS.combined}
                 strokeWidth={3}
-                dot={{ r: 2.5, strokeWidth: 0, fill: chartTheme.accent }}
+                dot={{
+                  r: 2.5,
+                  strokeWidth: 0,
+                  fill: CHART_COLORS.combined,
+                }}
                 activeDot={{ r: 5 }}
               />
             ) : null}
 
-            <Line
-              type="monotone"
-              dataKey="trend"
-              name="trend"
-              stroke={chartTheme.trend}
-              strokeWidth={2}
-              strokeDasharray="6 6"
-              dot={false}
-              activeDot={{ r: 4 }}
-            />
-
-            {visibleAccounts.map((account, index) => (
+            {!isHidden("trend") ? (
               <Line
-                key={account.accountId}
                 type="monotone"
-                dataKey={`account_${account.accountId}`}
-                name={`account_${account.accountId}`}
-                stroke={ACCOUNT_COLORS[index % ACCOUNT_COLORS.length]}
+                dataKey="trend"
+                name="trend"
+                stroke={CHART_COLORS.trend}
                 strokeWidth={2}
+                strokeDasharray="6 6"
                 dot={false}
                 activeDot={{ r: 4 }}
               />
-            ))}
+            ) : null}
+
+            {visibleAccounts.map((account) => {
+              const lineKey = `account_${account.accountId}`;
+
+              if (isHidden(lineKey)) {
+                return null;
+              }
+
+              return (
+                <Line
+                  key={account.accountId}
+                  type="monotone"
+                  dataKey={lineKey}
+                  name={lineKey}
+                  stroke={getPlatformColor(account.platform)}
+                  strokeWidth={2.5}
+                  dot={false}
+                  activeDot={{ r: 4 }}
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
       </div>
