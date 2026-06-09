@@ -21,6 +21,8 @@ type SearchParams = Promise<{
   tableSortBy?: string;
   tableSortOrder?: string;
   tableView?: string;
+  topPostsMode?: string;
+  topPostsRank?: string;
 }>;
 
 type ViewerResponse = {
@@ -161,14 +163,21 @@ type LeaderPost = {
   };
 };
 
+type TopPostsMode = "top" | "worst";
+
+type LeaderboardGroup = {
+  bestPerforming: LeaderPost[];
+  views: LeaderPost[];
+  likes: LeaderPost[];
+  comments: LeaderPost[];
+};
+
 type LeaderboardResponse = {
   ok: boolean;
   periodLabel: string;
   leaders: {
-    bestPerforming: LeaderPost | null;
-    views: LeaderPost | null;
-    likes: LeaderPost | null;
-    comments: LeaderPost | null;
+    top: LeaderboardGroup;
+    worst: LeaderboardGroup;
   };
 };
 
@@ -346,6 +355,20 @@ function isValidMetric(value: string): value is Metric {
 
 function isValidPeriod(value: string): value is Period {
   return value === "7" || value === "30" || value === "90" || value === "custom";
+}
+
+function isValidTopPostsMode(value: string): value is TopPostsMode {
+  return value === "top" || value === "worst";
+}
+
+function parseTopPostsRank(value: string) {
+  const rank = Number(value);
+
+  if (rank === 1 || rank === 2 || rank === 3) {
+    return rank;
+  }
+
+  return 1;
 }
 
 function formatDateInput(date: Date) {
@@ -782,14 +805,25 @@ function LeaderCard({
             {post.thumbnailUrl ? (
               <img
                 src={post.thumbnailUrl}
-                alt={post.caption || title}
+                alt=""
                 className="h-[96px] w-[72px] rounded-lg object-cover sm:h-[128px] sm:w-full"
               />
             ) : (
               <div
-                className="h-[96px] w-[72px] rounded-lg sm:h-[128px] sm:w-full"
-                style={{ backgroundColor: "var(--color-surface-muted)" }}
-              />
+                className="flex h-[96px] w-[72px] flex-col items-center justify-center rounded-lg border px-2 text-center sm:h-[128px] sm:w-full"
+                style={{
+                  borderColor: "var(--color-border)",
+                  backgroundColor: "var(--color-surface-muted)",
+                  color: "var(--color-muted)",
+                }}
+              >
+                <span className="text-[10px] font-semibold">
+                  {getPlatformLabel(post.platform)}
+                </span>
+                <span className="mt-1 text-[10px] leading-3">
+                  Ingen forhåndsvisning
+                </span>
+              </div>
             )}
           </a>
 
@@ -872,67 +906,6 @@ function InsightCard({
   );
 }
 
-function TopPostsInfo() {
-  return (
-    <details className="group relative">
-      <summary
-        className="flex h-7 w-7 cursor-pointer list-none items-center justify-center rounded-full border text-sm font-semibold transition"
-        style={{
-          borderColor: "var(--color-border)",
-          backgroundColor: "var(--color-surface)",
-          color: "var(--color-muted)",
-        }}
-        aria-label="Vis info om Top Posts"
-      >
-        i
-      </summary>
-
-      <div
-        className="absolute right-0 top-[calc(100%+12px)] z-[200] w-[260px] rounded-xl border p-4 text-sm shadow-[0_12px_28px_rgba(0,0,0,0.35)] sm:w-[340px]"
-        style={{
-          borderColor: "var(--color-border)",
-          backgroundColor: "var(--color-surface)",
-          color: "var(--color-text)",
-        }}
-      >
-        <p className="font-semibold" style={{ color: "var(--color-text)" }}>
-          Slik leser du Top Posts
-        </p>
-
-        <div
-          className="mt-3 space-y-2 leading-6"
-          style={{ color: "var(--color-text-soft)" }}
-        >
-          <p>
-            <span className="font-semibold" style={{ color: "var(--color-text)" }}>
-              Best Performing:
-            </span>{" "}
-            Innlegget som samlet sett har prestert best de siste 30 dagene.
-          </p>
-          <p>
-            <span className="font-semibold" style={{ color: "var(--color-text)" }}>
-              #1 Views:
-            </span>{" "}
-            Dette er videoen med flest views de siste 30 dagene.
-          </p>
-          <p>
-            <span className="font-semibold" style={{ color: "var(--color-text)" }}>
-              #1 Likes:
-            </span>{" "}
-            Dette er videoen med flest likes de siste 30 dagene.
-          </p>
-          <p>
-            <span className="font-semibold" style={{ color: "var(--color-text)" }}>
-              #1 Comments:
-            </span>{" "}
-            Dette er videoen med flest kommentarer de siste 30 dagene.
-          </p>
-        </div>
-      </div>
-    </details>
-  );
-}
-
 export default async function HomePage(props: { searchParams: SearchParams }) {
   const { userId } = await auth();
 
@@ -964,6 +937,16 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
     getSingleValue(searchParams.tableSortOrder) === "asc" ? "asc" : "desc";
   const tableView =
     getSingleValue(searchParams.tableView) === "all" ? "all" : "min";
+
+  const topPostsModeRaw = getSingleValue(searchParams.topPostsMode);
+  const topPostsRankRaw = getSingleValue(searchParams.topPostsRank);
+
+  const topPostsMode: TopPostsMode = isValidTopPostsMode(topPostsModeRaw)
+    ? topPostsModeRaw
+    : "top";
+
+  const topPostsRank = parseTopPostsRank(topPostsRankRaw);
+
   const heatmapAccountIdRaw = getSingleValue(searchParams.heatmapAccountId);
 
   const viewer = await getViewer();
@@ -1095,6 +1078,10 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
       ? publishedContent.posts
       : publishedContent.posts.slice(0, 10);
 
+  const selectedLeaderboard = leaderboard.leaders[topPostsMode];
+  const selectedTopPostsIndex = topPostsRank - 1;
+  const nextTopPostsRank = topPostsRank === 3 ? 1 : topPostsRank + 1;
+
   function buildHref(overrides?: Record<string, string | string[] | undefined>) {
     const params = new URLSearchParams();
 
@@ -1141,6 +1128,8 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
     params.set("tableSortBy", tableSortBy);
     params.set("tableSortOrder", tableSortOrder);
     params.set("tableView", tableView);
+    params.set("topPostsMode", topPostsMode);
+    params.set("topPostsRank", String(topPostsRank));
 
     return `?${params.toString()}`;
   }
@@ -1178,6 +1167,8 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
         (tableSortBy === nextSortBy && tableSortOrder === "desc" ? "asc" : "desc")
     );
     params.set("tableView", nextView ?? tableView);
+    params.set("topPostsMode", topPostsMode);
+    params.set("topPostsRank", String(topPostsRank));
 
     return `?${params.toString()}`;
   }
@@ -1207,6 +1198,42 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
     params.set("tableSortBy", tableSortBy);
     params.set("tableSortOrder", tableSortOrder);
     params.set("tableView", nextView);
+    params.set("topPostsMode", topPostsMode);
+    params.set("topPostsRank", String(topPostsRank));
+
+    return `?${params.toString()}`;
+  }
+
+  function createTopPostsHref(overrides: {
+    topPostsMode?: TopPostsMode;
+    topPostsRank?: number;
+  }) {
+    const params = new URLSearchParams();
+
+    params.set("mode", mode);
+    params.set("metric", metric);
+    params.set("period", period);
+
+    if (period === "custom") {
+      params.set("from", from);
+      params.set("to", to);
+    }
+
+    selectedAccountIds.forEach((id) => params.append("accountIds", id));
+
+    if (selectedHeatmapAccountId) {
+      params.set("heatmapAccountId", selectedHeatmapAccountId);
+    }
+
+    if (tableSearch.trim() !== "") {
+      params.set("tableSearch", tableSearch);
+    }
+
+    params.set("tableSortBy", tableSortBy);
+    params.set("tableSortOrder", tableSortOrder);
+    params.set("tableView", tableView);
+    params.set("topPostsMode", overrides.topPostsMode ?? topPostsMode);
+    params.set("topPostsRank", String(overrides.topPostsRank ?? topPostsRank));
 
     return `?${params.toString()}`;
   }
@@ -1241,6 +1268,8 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
   heatmapFormParams.push({ key: "tableSortBy", value: tableSortBy });
   heatmapFormParams.push({ key: "tableSortOrder", value: tableSortOrder });
   heatmapFormParams.push({ key: "tableView", value: tableView });
+  heatmapFormParams.push({ key: "topPostsMode", value: topPostsMode });
+  heatmapFormParams.push({ key: "topPostsRank", value: String(topPostsRank) });
 
   return (
     <AppThemeShell>
@@ -1469,6 +1498,8 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                   <input type="hidden" name="tableSortBy" value={tableSortBy} />
                   <input type="hidden" name="tableSortOrder" value={tableSortOrder} />
                   <input type="hidden" name="tableView" value={tableView} />
+                  <input type="hidden" name="topPostsMode" value={topPostsMode} />
+                  <input type="hidden" name="topPostsRank" value={topPostsRank} />
 
                   {selectedHeatmapAccountId ? (
                     <input
@@ -1639,41 +1670,95 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3
-                          className="text-lg font-semibold"
-                          style={{ color: "var(--color-text)" }}
+                      <Link
+                        href={createTopPostsHref({
+                          topPostsMode: topPostsMode === "top" ? "worst" : "top",
+                          topPostsRank: 1,
+                        })}
+                        scroll={false}
+                        className="group inline-flex items-center gap-2 text-lg font-semibold tracking-tight transition hover:opacity-80"
+                        style={{ color: "var(--color-text)" }}
+                        aria-label={
+                          topPostsMode === "top"
+                            ? "Bytt til Worst Posts"
+                            : "Bytt til Top Posts"
+                        }
+                      >
+                        {topPostsMode === "top" ? "Top Posts" : "Worst Posts"}
+                        <span
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] transition group-hover:translate-x-0.5"
+                          style={{
+                            backgroundColor: "var(--color-surface)",
+                            color: "var(--color-muted)",
+                          }}
+                          aria-hidden="true"
                         >
-                          Top Posts
-                        </h3>
-                        <TopPostsInfo />
-                      </div>
+                          ↔
+                        </span>
+                      </Link>
+
                       <p
-                        className="mt-1 text-sm"
+                        className="mt-2 text-sm leading-6"
                         style={{ color: "var(--color-muted)" }}
                       >
-                        Her ser du innleggene som har prestert best i perioden.
+                        {topPostsMode === "top"
+                          ? "Her ser du innleggene som har prestert best de siste 30 dagene."
+                          : "Her ser du innleggene som har prestert svakest de siste 30 dagene."}
                       </p>
                     </div>
 
-                    <span
-                      className="shrink-0 text-xs font-medium"
-                      style={{ color: "var(--color-muted)" }}
-                    >
-                      Siste 30 dager
-                    </span>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <Link
+                        href={createTopPostsHref({ topPostsRank: nextTopPostsRank })}
+                        scroll={false}
+                        className="group inline-flex items-center gap-1.5 text-sm font-semibold transition hover:opacity-80"
+                        style={{ color: "var(--color-text)" }}
+                        aria-label={`Bytt til #${nextTopPostsRank}`}
+                      >
+                        #{topPostsRank}
+                        <span
+                          className="text-xs transition group-hover:translate-x-0.5"
+                          style={{ color: "var(--color-muted)" }}
+                          aria-hidden="true"
+                        >
+                          →
+                        </span>
+                      </Link>
+
+                      <span
+                        className="text-xs font-medium"
+                        style={{ color: "var(--color-muted)" }}
+                      >
+                        Siste 30 dager
+                      </span>
+                    </div>
                   </div>
 
                   <div className="mt-5 space-y-4">
                     <LeaderCard
-                      title="Best Performing"
-                      post={leaderboard.leaders.bestPerforming}
+                      title={topPostsMode === "top" ? "Best totalt" : "Svakest totalt"}
+                      post={
+                        selectedLeaderboard.bestPerforming[selectedTopPostsIndex] ?? null
+                      }
                     />
-                    <LeaderCard title="#1 Views" post={leaderboard.leaders.views} />
-                    <LeaderCard title="#1 Likes" post={leaderboard.leaders.likes} />
+
                     <LeaderCard
-                      title="#1 Comments"
-                      post={leaderboard.leaders.comments}
+                      title={topPostsMode === "top" ? "Flest views" : "Færrest views"}
+                      post={selectedLeaderboard.views[selectedTopPostsIndex] ?? null}
+                    />
+
+                    <LeaderCard
+                      title={topPostsMode === "top" ? "Flest likes" : "Færrest likes"}
+                      post={selectedLeaderboard.likes[selectedTopPostsIndex] ?? null}
+                    />
+
+                    <LeaderCard
+                      title={
+                        topPostsMode === "top"
+                          ? "Flest kommentarer"
+                          : "Færrest kommentarer"
+                      }
+                      post={selectedLeaderboard.comments[selectedTopPostsIndex] ?? null}
                     />
                   </div>
                 </aside>
@@ -1732,6 +1817,8 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                   <input type="hidden" name="tableSortBy" value={tableSortBy} />
                   <input type="hidden" name="tableSortOrder" value={tableSortOrder} />
                   <input type="hidden" name="tableView" value={tableView} />
+                  <input type="hidden" name="topPostsMode" value={topPostsMode} />
+                  <input type="hidden" name="topPostsRank" value={topPostsRank} />
 
                   {selectedHeatmapAccountId ? (
                     <input
@@ -1912,16 +1999,20 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                                     {post.thumbnailUrl ? (
                                       <img
                                         src={post.thumbnailUrl}
-                                        alt={post.caption || "Thumbnail"}
+                                        alt=""
                                         className="h-14 w-10 rounded-md object-cover"
                                       />
                                     ) : (
                                       <div
-                                        className="h-14 w-10 rounded-md"
+                                        className="flex h-14 w-10 items-center justify-center rounded-md border text-[10px] font-semibold"
                                         style={{
+                                          borderColor: "var(--color-border)",
                                           backgroundColor: "var(--color-surface-muted)",
+                                          color: "var(--color-muted)",
                                         }}
-                                      />
+                                      >
+                                        —
+                                      </div>
                                     )}
                                   </a>
 

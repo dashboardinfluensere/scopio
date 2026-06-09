@@ -1153,6 +1153,7 @@ router.get(
           url: string;
           thumbnailUrl: string;
           platform: Platform;
+          durationSeconds: number | null;
           stats: {
             views: number;
             likes: number;
@@ -1192,6 +1193,7 @@ router.get(
           url: post.url ?? "",
           thumbnailUrl: post.thumbnailUrl ?? "",
           platform: post.socialAccount.platform,
+          durationSeconds: post.durationSeconds,
           stats: {
             views,
             likes,
@@ -1206,36 +1208,55 @@ router.get(
         return acc;
       }, []);
 
-      const topBestPerforming =
-        mappedPosts.length > 0
-          ? [...mappedPosts].sort(
-              (a, b) => b.stats.bestPerformingScore - a.stats.bestPerformingScore
-            )[0]
-          : null;
+      const isVideoPost = (post: { durationSeconds: number | null }) => {
+        return (
+          typeof post.durationSeconds === "number" &&
+          post.durationSeconds > 0
+        );
+      };
 
-      const topViews =
-        mappedPosts.length > 0
-          ? [...mappedPosts].sort((a, b) => b.stats.views - a.stats.views)[0]
-          : null;
+      const getPostsForMetric = (
+        key: "bestPerformingScore" | "views" | "likes" | "comments"
+      ) => {
+        if (key === "views" || key === "bestPerformingScore") {
+          return mappedPosts.filter(isVideoPost);
+        }
 
-      const topLikes =
-        mappedPosts.length > 0
-          ? [...mappedPosts].sort((a, b) => b.stats.likes - a.stats.likes)[0]
-          : null;
+        return mappedPosts;
+      };
 
-      const topComments =
-        mappedPosts.length > 0
-          ? [...mappedPosts].sort((a, b) => b.stats.comments - a.stats.comments)[0]
-          : null;
+      const getTopThree = (
+        key: "bestPerformingScore" | "views" | "likes" | "comments"
+      ) => {
+        return [...getPostsForMetric(key)]
+          .sort((a, b) => b.stats[key] - a.stats[key])
+          .slice(0, 3);
+      };
+
+      const getWorstThree = (
+        key: "bestPerformingScore" | "views" | "likes" | "comments"
+      ) => {
+        return [...getPostsForMetric(key)]
+          .sort((a, b) => a.stats[key] - b.stats[key])
+          .slice(0, 3);
+      };
 
       return res.json({
         ok: true,
         periodLabel: "Siste 30 dager",
         leaders: {
-          bestPerforming: topBestPerforming,
-          views: topViews,
-          likes: topLikes,
-          comments: topComments,
+          top: {
+            bestPerforming: getTopThree("bestPerformingScore"),
+            views: getTopThree("views"),
+            likes: getTopThree("likes"),
+            comments: getTopThree("comments"),
+          },
+          worst: {
+            bestPerforming: getWorstThree("bestPerformingScore"),
+            views: getWorstThree("views"),
+            likes: getWorstThree("likes"),
+            comments: getWorstThree("comments"),
+          },
         },
       });
     } catch (error) {
