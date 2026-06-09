@@ -406,8 +406,8 @@ export default function TrackedAccountsManager({
       setDisplayNameTouched(false);
       setSuccessMessage(
         data.action === "reactivated"
-          ? "Konto aktivert igjen og initial scrape startet."
-          : "Konto lagt til og initial scrape startet."
+          ? "Konto aktivert igjen og datainnhenting startet."
+          : "Konto lagt til og datainnhenting startet."
       );
 
       await refreshAccounts();
@@ -544,7 +544,7 @@ export default function TrackedAccountsManager({
     setSuccessMessage("");
 
     if (!canRetryFailedScrapes) {
-      setError("Kun owner eller admin kan restarte feilet scraping.");
+      setError("Kun owner eller admin kan restarte feilet datainnhenting.");
       return;
     }
 
@@ -566,7 +566,7 @@ export default function TrackedAccountsManager({
       const data: RetryScrapeResponse = await response.json();
 
       if (!response.ok) {
-        setError(data.error || "Kunne ikke restarte scraping.");
+        setError(data.error || "Kunne ikke restarte datainnhenting.");
         return;
       }
 
@@ -617,13 +617,13 @@ export default function TrackedAccountsManager({
 
       setSuccessMessage(
         jobType === "INITIAL"
-          ? "Initial scraping er startet på nytt."
+          ? "Datainnhenting er startet på nytt."
           : "Daglig data-innhenting er startet på nytt."
       );
 
       await refreshAccounts();
     } catch {
-      setError("Noe gikk galt da scraping skulle restartes.");
+      setError("Noe gikk galt da datainnhentingen skulle startes på nytt.");
     } finally {
       setRetryingKey(null);
     }
@@ -1045,52 +1045,58 @@ export default function TrackedAccountsManager({
                           style={{ borderColor: "var(--color-border)" }}
                         >
                           <div className="flex flex-col gap-3">
-                            <div className="flex flex-col gap-1">
-                              <span
-                                className="text-[11px] font-semibold uppercase tracking-wide"
-                                style={{ color: "var(--color-muted)" }}
-                              >
-                                Initial scraping
-                              </span>
-                              <div className="flex flex-col gap-2">
+                            {account.initialSyncStatus === "FAILED" ||
+                            account.initialSyncStatus === "RUNNING" ||
+                            account.initialSyncStatus === "PENDING" ? (
+                              <div className="flex flex-col gap-1">
                                 <span
-                                  className={[
-                                    "inline-flex w-fit rounded-full border px-3 py-1 text-[11px] font-semibold",
-                                    getInitialSyncBadgeClasses(account.initialSyncStatus),
-                                  ].join(" ")}
+                                  className="text-[11px] font-semibold uppercase tracking-wide"
+                                  style={{ color: "var(--color-muted)" }}
                                 >
-                                  {getInitialSyncLabel(account.initialSyncStatus)}
+                                  Datainnhenting
                                 </span>
 
-                                {account.retry.canRetryInitial && canRetryFailedScrapes ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRetry(account, "INITIAL")}
-                                    disabled={retryingKey === initialRetryKey}
-                                    className="inline-flex w-fit items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
-                                    style={{
-                                      borderColor: "var(--color-border)",
-                                      backgroundColor: "var(--color-surface)",
-                                      color: "var(--color-text)",
-                                    }}
+                                <div className="flex flex-col gap-2">
+                                  <span
+                                    className={[
+                                      "inline-flex w-fit rounded-full border px-3 py-1 text-[11px] font-semibold",
+                                      getInitialSyncBadgeClasses(account.initialSyncStatus),
+                                    ].join(" ")}
                                   >
-                                    {retryingKey === initialRetryKey
-                                      ? "Starter..."
-                                      : "Prøv igjen"}
-                                  </button>
-                                ) : null}
+                                    {getInitialSyncLabel(account.initialSyncStatus)}
+                                  </span>
 
-                                {account.latestInitialJob?.status === "FAILED" &&
-                                account.latestInitialJob.errorMessage ? (
-                                  <p
-                                    className="max-w-[260px] text-xs leading-5"
-                                    style={{ color: "var(--color-muted)" }}
-                                  >
-                                    {account.latestInitialJob.errorMessage}
-                                  </p>
-                                ) : null}
+                                  {account.retry.canRetryInitial &&
+                                  canRetryFailedScrapes ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRetry(account, "INITIAL")}
+                                      disabled={retryingKey === initialRetryKey}
+                                      className="inline-flex w-fit items-center justify-center rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                                      style={{
+                                        borderColor: "var(--color-border)",
+                                        backgroundColor: "var(--color-surface)",
+                                        color: "var(--color-text)",
+                                      }}
+                                    >
+                                      {retryingKey === initialRetryKey
+                                        ? "Starter..."
+                                        : "Prøv igjen"}
+                                    </button>
+                                  ) : null}
+
+                                  {account.latestInitialJob?.status === "FAILED" &&
+                                  account.latestInitialJob.errorMessage ? (
+                                    <p
+                                      className="max-w-[260px] text-xs leading-5"
+                                      style={{ color: "var(--color-muted)" }}
+                                    >
+                                      {account.latestInitialJob.errorMessage}
+                                    </p>
+                                  ) : null}
+                                </div>
                               </div>
-                            </div>
+                            ) : null}
 
                             <div className="flex flex-col gap-1">
                               <span
@@ -1232,7 +1238,7 @@ export default function TrackedAccountsManager({
                 style={{ color: "var(--color-text-soft)" }}
               >
                 Dersom du legger den til igjen senere, vil det telle som en ny konto
-                i 30-dagersgrensen og starte en ny initial scrape.
+                i 30-dagersgrensen og starte en ny datainnhenting.
               </p>
             </div>
 
