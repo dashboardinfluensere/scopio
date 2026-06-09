@@ -333,7 +333,7 @@ export default function GrowthChart({
         <ResponsiveContainer width="100%" height="100%">
           <LineChart
             data={chartData}
-            margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
+            margin={{ top: 12, right: 8, left: 0, bottom: 8 }}
           >
             <CartesianGrid stroke={chartTheme.border} vertical={false} />
 
@@ -352,6 +352,7 @@ export default function GrowthChart({
               tick={{ fill: chartTheme.muted, fontSize: 12 }}
               tickFormatter={(value) => formatYAxis(Number(value), metric)}
               width={60}
+              domain={["auto", "auto"]}
               axisLine={{ stroke: chartTheme.border }}
               tickLine={{ stroke: chartTheme.border }}
             />

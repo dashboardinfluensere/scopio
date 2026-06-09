@@ -3,7 +3,11 @@ import Link from "next/link";
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import ConnectedAccounts from "../../components/ConnectedAccounts";
-import GrowthChart from "../../components/GrowthChart";
+import DashboardInteractive, {
+  DashboardChartFrame,
+  DashboardMetrics,
+  DashboardModeSwitch,
+} from "../../components/DashboardInteractive";
 import PublishingHeatmap from "../../components/PublishingHeatmap";
 import UserMenuButton from "../../components/UserMenuButton";
 import AppThemeShell from "../../components/AppThemeShell";
@@ -278,13 +282,6 @@ function formatPercent(value: number) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}%`;
-}
-
-function formatComparisonPercent(value: number) {
-  const rounded = Number(value.toFixed(1));
-  const sign = rounded > 0 ? "+" : "";
-
-  return `${sign}${rounded.toLocaleString("no-NO")} % siste periode`;
 }
 
 function formatDate(value: string) {
@@ -680,67 +677,6 @@ function SegmentButton({
   );
 }
 
-function MetricCard({
-  label,
-  value,
-  comparisonText,
-  comparisonPositive,
-  active,
-  href,
-}: {
-  label: string;
-  value: string;
-  comparisonText?: string;
-  comparisonPositive?: boolean;
-  active: boolean;
-  href: string;
-}) {
-  return (
-    <Link
-      href={href}
-      scroll={false}
-      className="block rounded-xl border p-4 transition md:p-6"
-      style={
-        active
-          ? {
-              borderColor: "var(--color-accent)",
-              backgroundColor: "var(--color-accent-soft)",
-              boxShadow: "0 1px 3px rgba(0,0,0,0.14)",
-            }
-          : {
-              borderColor: "var(--color-border)",
-              backgroundColor: "var(--color-surface)",
-            }
-      }
-    >
-      <div
-        className="text-sm font-medium"
-        style={{ color: "var(--color-muted)" }}
-      >
-        {label}
-      </div>
-
-      <div
-        className="mt-3 text-[1.75rem] font-bold leading-none md:text-[2rem]"
-        style={{ color: "var(--color-text)" }}
-      >
-        {value}
-      </div>
-
-      {comparisonText ? (
-        <div
-          className="mt-2 text-sm font-medium"
-          style={{
-            color: comparisonPositive ? "#22c55e" : "#ef4444",
-          }}
-        >
-          {comparisonText}
-        </div>
-      ) : null}
-    </Link>
-  );
-}
-
 function InfoBadge({ label }: { label: string }) {
   return (
     <span
@@ -1047,32 +983,6 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
     getFirstName(clerkUser?.fullName) ||
     getFirstName(clerkUser?.firstName);
 
-  const summaryValues = {
-    views:
-      mode === "total"
-        ? formatNumber(accountSummary.summary.totalViews)
-        : formatNumber(accountSummary.summary.averageViewsPerPost),
-    likes:
-      mode === "total"
-        ? formatNumber(accountSummary.summary.totalLikes)
-        : formatNumber(accountSummary.summary.averageLikesPerPost),
-    publishing:
-      mode === "total"
-        ? formatNumber(accountSummary.summary.totalPostCount)
-        : formatNumber(accountSummary.summary.averagePostsPerDay),
-    engagement:
-      mode === "total"
-        ? formatPercent(accountSummary.summary.totalEngagementRate)
-        : formatPercent(accountSummary.summary.averageEngagementRate),
-  };
-
-  const comparisonValues = {
-    views: accountSummary.summary.comparison?.views,
-    likes: accountSummary.summary.comparison?.likes,
-    posts: accountSummary.summary.comparison?.posts,
-    engagement: accountSummary.summary.comparison?.engagement,
-  };
-
   const visiblePosts =
     tableView === "all"
       ? publishedContent.posts
@@ -1343,7 +1253,14 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
             }}
           >
             <div className="flex flex-col gap-5 md:gap-6">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+              <DashboardInteractive
+                initialMode={mode}
+                initialMetric={metric}
+                summary={accountSummary.summary}
+                growth={growth.growth}
+                selectedAccountIds={selectedAccountIds}
+              >
+                <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:gap-8">
                   <ConnectedAccounts
                     accounts={safeAccounts}
@@ -1365,28 +1282,7 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                 </div>
 
                 <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:gap-6">
-                  <div
-                    className="w-full rounded-xl border p-1 xl:w-auto"
-                    style={{
-                      borderColor: "var(--color-border)",
-                      backgroundColor: "var(--color-surface-soft)",
-                    }}
-                  >
-                    <div className="flex items-center gap-1">
-                      <SegmentButton
-                        label="Totalt"
-                        active={mode === "total"}
-                        href={buildHref({ mode: "total" })}
-                        wide
-                      />
-                      <SegmentButton
-                        label="Gjennomsnitt"
-                        active={mode === "average"}
-                        href={buildHref({ mode: "average" })}
-                        wide
-                      />
-                    </div>
-                  </div>
+                  <DashboardModeSwitch />
 
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
                     <span
@@ -1567,101 +1463,12 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                 </form>
               ) : null}
 
-              <section className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-                <MetricCard
-                  label="Views"
-                  value={summaryValues.views}
-                  comparisonText={
-                    comparisonValues.views
-                      ? formatComparisonPercent(comparisonValues.views.changePercent)
-                      : undefined
-                  }
-                  comparisonPositive={
-                    comparisonValues.views
-                      ? comparisonValues.views.changePercent >= 0
-                      : undefined
-                  }
-                  active={metric === "views"}
-                  href={buildHref({ metric: "views" })}
-                />
-                <MetricCard
-                  label="Likes"
-                  value={summaryValues.likes}
-                  comparisonText={
-                    comparisonValues.likes
-                      ? formatComparisonPercent(comparisonValues.likes.changePercent)
-                      : undefined
-                  }
-                  comparisonPositive={
-                    comparisonValues.likes
-                      ? comparisonValues.likes.changePercent >= 0
-                      : undefined
-                  }
-                  active={metric === "likes"}
-                  href={buildHref({ metric: "likes" })}
-                />
-                <MetricCard
-                  label="Publiseringer"
-                  value={summaryValues.publishing}
-                  comparisonText={
-                    comparisonValues.posts
-                      ? formatComparisonPercent(comparisonValues.posts.changePercent)
-                      : undefined
-                  }
-                  comparisonPositive={
-                    comparisonValues.posts
-                      ? comparisonValues.posts.changePercent >= 0
-                      : undefined
-                  }
-                  active={metric === "publishing"}
-                  href={buildHref({ metric: "publishing" })}
-                />
-                <MetricCard
-                  label="Engasjement"
-                  value={summaryValues.engagement}
-                  comparisonText={
-                    comparisonValues.engagement
-                      ? formatComparisonPercent(
-                          comparisonValues.engagement.changePercent
-                        )
-                      : undefined
-                  }
-                  comparisonPositive={
-                    comparisonValues.engagement
-                      ? comparisonValues.engagement.changePercent >= 0
-                      : undefined
-                  }
-                  active={metric === "engagement"}
-                  href={buildHref({ metric: "engagement" })}
-                />
-              </section>
+                <DashboardMetrics />
 
-              <section className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_auto]">
-                <div
-                  className="rounded-xl border p-4 shadow-sm md:p-6"
-                  style={{
-                    borderColor: "var(--color-border)",
-                    backgroundColor: "var(--color-surface)",
-                  }}
-                >
-                  <GrowthChart
-                    data={growth.growth}
-                    metric={metric}
-                    mode={mode}
-                    metricLabel={
-                      metric === "views"
-                        ? "Views"
-                        : metric === "likes"
-                          ? "Likes"
-                          : metric === "publishing"
-                            ? "Publiseringer"
-                            : "Engasjement"
-                    }
-                    selectedAccountIds={selectedAccountIds}
-                  />
-                </div>
+                <section className="relative grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px] xl:grid-rows-[auto_auto]">
+                  <DashboardChartFrame />
 
-                <aside
+                  <aside
                   className="relative z-[1] rounded-xl border p-4 shadow-sm xl:row-span-2"
                   style={{
                     borderColor: "var(--color-border)",
@@ -1763,15 +1570,16 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                   </div>
                 </aside>
 
-                <div className="relative z-[20] overflow-visible">
-                  <PublishingHeatmap
-                    accounts={safeAccounts}
-                    selectedAccountId={selectedHeatmapAccountId}
-                    cells={publishingHeatmap.cells}
-                    currentParams={heatmapFormParams}
-                  />
-                </div>
-              </section>
+                  <div className="relative z-[20] overflow-visible">
+                    <PublishingHeatmap
+                      accounts={safeAccounts}
+                      selectedAccountId={selectedHeatmapAccountId}
+                      cells={publishingHeatmap.cells}
+                      currentParams={heatmapFormParams}
+                    />
+                  </div>
+                </section>
+              </DashboardInteractive>
 
               <section
                 className="rounded-xl border p-4 shadow-sm md:p-6"
