@@ -93,6 +93,16 @@ function getDaysLeft(endDate: string | null | undefined) {
   return diffDays > 0 ? diffDays : 0;
 }
 
+function formatDate(dateString: string | null | undefined) {
+  if (!dateString) return null;
+
+  return new Intl.DateTimeFormat("nb-NO", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(new Date(dateString));
+}
+
 function getPlanName(subscription: SubscriptionInfo) {
   if (!subscription) return "Ukjent plan";
 
@@ -131,6 +141,14 @@ function getPlanDescription(subscription: SubscriptionInfo) {
   }
 
   if (subscription.status === "ACTIVE") {
+    if (subscription.cancelAtPeriodEnd) {
+      const endDate = formatDate(subscription.currentPeriodEnd);
+
+      return endDate
+        ? `Medlemskapet er avsluttet og er aktivt frem til ${endDate}.`
+        : "Medlemskapet er avsluttet og er aktivt ut perioden.";
+    }
+
     return "Abonnementet er aktivt.";
   }
 
@@ -210,6 +228,7 @@ export default function ProfileForm({
   const [deleteOrganizationId, setDeleteOrganizationId] = useState("");
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletingWorkspace, setDeletingWorkspace] = useState(false);
+  const [reactivatingWorkspace, setReactivatingWorkspace] = useState(false);
 
   const activeWorkspace = organizations.find(
     (item) => item.organization.id === activeOrganizationId
@@ -218,6 +237,10 @@ export default function ProfileForm({
   const deletableWorkspace = organizations.find(
     (item) => item.organization.id === deleteOrganizationId
   );
+
+  const selectedSubscription = deletableWorkspace?.organization.subscription ?? null;
+  const selectedMembershipIsCanceled =
+    selectedSubscription?.cancelAtPeriodEnd === true;
 
   const ownerOrganizations = organizations.filter(
     (item) => item.role === "OWNER"
@@ -235,19 +258,101 @@ export default function ProfileForm({
   const canDeleteWorkspace =
     isOwnerOfActiveWorkspace &&
     !!deleteOrganizationId &&
-    deleteConfirmText.trim() === "SLETT" &&
-    !deletingWorkspace;
+    !selectedMembershipIsCanceled &&
+    deleteConfirmText.trim() === "AVSLUTT" &&
+    !deletingWorkspace &&
+    !reactivatingWorkspace;
+
+  const canReactivateWorkspace =
+    isOwnerOfActiveWorkspace &&
+    !!deleteOrganizationId &&
+    selectedMembershipIsCanceled &&
+    !deletingWorkspace &&
+    !reactivatingWorkspace;
 
   const deleteWorkspaceWithReverification = useReverification(async () => {
-    return fetch(`/api/organizations/${deleteOrganizationId}`, {
+    const response = await fetch(`/api/organizations/${deleteOrganizationId}`, {
       method: "DELETE",
       headers: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        confirmationText: "SLETT",
+        confirmationText: "AVSLUTT",
       }),
     });
+
+    if (response.status === 403) {
+      return response;
+    }
+
+    const responseText = await response.clone().text();
+
+    let data: any = null;
+
+    try {
+      data = responseText ? JSON.parse(responseText) : null;
+    } catch {
+      setWorkspaceError(
+        responseText.startsWith("<")
+          ? "Serveren svarte med HTML i stedet for JSON. Sjekk frontend API-routen, backend og API_URL."
+          : responseText || "Uventet respons fra serveren."
+      );
+
+      return response;
+    }
+
+    if (!response.ok) {
+      setWorkspaceError(data?.error || "Kunne ikke avslutte medlemskapet.");
+      return response;
+    }
+
+    const canceledId = deleteOrganizationId;
+    const scheduledDeletionAt =
+      typeof data?.scheduledDeletionAt === "string"
+        ? data.scheduledDeletionAt
+        : null;
+    const currentPeriodEnd =
+      typeof data?.currentPeriodEnd === "string"
+        ? data.currentPeriodEnd
+        : scheduledDeletionAt;
+
+    const updatedOrganizations = organizations.map((item) => {
+      if (item.organization.id !== canceledId) {
+        return item;
+      }
+
+      const currentSubscription = item.organization.subscription;
+
+      return {
+        ...item,
+        organization: {
+          ...item.organization,
+          subscription: currentSubscription
+            ? {
+                ...currentSubscription,
+                cancelAtPeriodEnd: true,
+                currentPeriodEnd:
+                  currentPeriodEnd ?? currentSubscription.currentPeriodEnd,
+              }
+            : currentSubscription,
+        },
+      };
+    });
+
+    setOrganizations(updatedOrganizations);
+    setDeleteConfirmText("");
+
+    const formattedEndDate = formatDate(currentPeriodEnd);
+
+    setWorkspaceSuccess(
+      formattedEndDate
+        ? `Medlemskapet er avsluttet. Du beholder tilgang frem til ${formattedEndDate}. Etter dette slettes workspace og tilknyttede data automatisk.`
+        : "Medlemskapet er avsluttet. Du beholder tilgang frem til perioden er over. Etter dette slettes workspace og tilknyttede data automatisk."
+    );
+
+    router.refresh();
+
+    return response;
   });
 
   useEffect(() => {
@@ -786,85 +891,98 @@ export default function ProfileForm({
     setWorkspaceSuccess("");
 
     if (!deleteOrganizationId) {
-      setWorkspaceError("Velg et workspace du vil slette.");
+      setWorkspaceError("Velg et medlemskap du vil avslutte.");
       return;
     }
 
-    if (deleteConfirmText.trim() !== "SLETT") {
-      setWorkspaceError("Skriv SLETT for å bekrefte.");
+    if (deleteConfirmText.trim() !== "AVSLUTT") {
+      setWorkspaceError("Skriv AVSLUTT for å bekrefte.");
       return;
     }
 
     try {
       setDeletingWorkspace(true);
 
-      const result = await deleteWorkspaceWithReverification();
+      await deleteWorkspaceWithReverification();
+    } catch (err) {
+      setWorkspaceError(
+        err instanceof Error
+          ? err.message
+          : "Noe gikk galt da medlemskapet skulle avsluttes."
+      );
+    } finally {
+      setDeletingWorkspace(false);
+    }
+  }
 
-      if (!result) {
-        return;
-      }
+  async function performReactivateWorkspace() {
+    setWorkspaceError("");
+    setWorkspaceSuccess("");
 
-      let response: Response | null = null;
+    if (!deleteOrganizationId) {
+      setWorkspaceError("Velg et medlemskap du vil reaktivere.");
+      return;
+    }
 
-      if (result instanceof Response) {
-        response = result;
-      } else {
-        const possibleResult = result as { response?: unknown };
+    try {
+      setReactivatingWorkspace(true);
 
-        if (possibleResult.response instanceof Response) {
-          response = possibleResult.response;
+      const response = await authedFetch(
+        `${API_URL}/organizations/${deleteOrganizationId}/reactivate`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+          },
         }
-      }
-
-      if (!response) {
-        setWorkspaceError("Uventet respons fra re-verifisering.");
-        return;
-      }
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
-        setWorkspaceError(data?.error || "Kunne ikke slette workspace.");
+        setWorkspaceError(data?.error || "Kunne ikke reaktivere medlemskapet.");
         return;
       }
 
-      const nextActiveOrganizationId =
-        typeof data?.activeOrganizationId === "string" &&
-        data.activeOrganizationId.trim() !== ""
-          ? data.activeOrganizationId
-          : null;
+      const reactivatedId = deleteOrganizationId;
 
-      const deletedId = deleteOrganizationId;
+      const updatedOrganizations = organizations.map((item) => {
+        if (item.organization.id !== reactivatedId) {
+          return item;
+        }
 
-      const remainingOrganizations = organizations
-        .filter((item) => item.organization.id !== deletedId)
-        .map((item) => ({
+        const currentSubscription = item.organization.subscription;
+
+        return {
           ...item,
-          isActive: item.organization.id === nextActiveOrganizationId,
-        }));
+          organization: {
+            ...item.organization,
+            subscription: currentSubscription
+              ? {
+                  ...currentSubscription,
+                  cancelAtPeriodEnd: false,
+                  currentPeriodEnd:
+                    typeof data?.currentPeriodEnd === "string"
+                      ? data.currentPeriodEnd
+                      : currentSubscription.currentPeriodEnd,
+                }
+              : currentSubscription,
+          },
+        };
+      });
 
-      setOrganizations(remainingOrganizations);
-      setActiveOrganizationId(nextActiveOrganizationId);
-      setDeleteOrganizationId("");
+      setOrganizations(updatedOrganizations);
       setDeleteConfirmText("");
-      setWorkspaceSuccess("Workspace slettet.");
-
-      if (!nextActiveOrganizationId) {
-        router.push("/onboarding");
-        router.refresh();
-        return;
-      }
-
-      router.push("/dashboard");
+      setWorkspaceSuccess("Medlemskapet er reaktivert. Automatisk sletting er avbrutt.");
       router.refresh();
     } catch (err) {
       setWorkspaceError(
         err instanceof Error
           ? err.message
-          : "Noe gikk galt da workspace skulle slettes."
+          : "Noe gikk galt da medlemskapet skulle reaktiveres."
       );
     } finally {
-      setDeletingWorkspace(false);
+      setReactivatingWorkspace(false);
     }
   }
 
@@ -1646,21 +1764,22 @@ export default function ProfileForm({
                   className="text-base font-semibold"
                   style={{ color: "var(--color-danger-text)" }}
                 >
-                  Slett workspace
+                  Avslutt medlemskap
                 </h4>
                 <p
                   className="text-sm"
                   style={{ color: "var(--color-danger-text)" }}
                 >
-                  Dette sletter workspace-et, abonnementet og tilknyttede data
-                  permanent. Dette kan ikke angres.
+                  Du beholder tilgang til Scopio frem til den betalte perioden
+                  er over. Etter dette slettes workspace og tilknyttede data
+                  automatisk.
                 </p>
                 <p
                   className="text-sm"
                   style={{ color: "var(--color-danger-text)" }}
                 >
                   Du må være owner. Skriv{" "}
-                  <span className="font-semibold">SLETT</span> for å bekrefte.
+                  <span className="font-semibold">AVSLUTT</span> for å bekrefte.
                 </p>
               </div>
 
@@ -1673,14 +1792,14 @@ export default function ProfileForm({
                     className="font-medium"
                     style={{ color: "var(--color-danger-text)" }}
                   >
-                    Velg workspace som skal slettes
+                    Velg workspace/medlemskap som skal avsluttes
                   </span>
                   <select
                     value={deleteOrganizationId}
                     onChange={(event) =>
                       setDeleteOrganizationId(event.target.value)
                     }
-                    disabled={deletingWorkspace || !isOwnerOfActiveWorkspace}
+                    disabled={deletingWorkspace || reactivatingWorkspace || !isOwnerOfActiveWorkspace}
                     className="rounded-xl border px-4 py-3 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
                     style={{
                       borderColor: "rgba(220, 38, 38, 0.35)",
@@ -1708,15 +1827,15 @@ export default function ProfileForm({
                     className="font-medium"
                     style={{ color: "var(--color-danger-text)" }}
                   >
-                    Skriv SLETT for å bekrefte
+                    Skriv AVSLUTT for å bekrefte
                   </span>
                   <input
                     value={deleteConfirmText}
                     onChange={(event) =>
                       setDeleteConfirmText(event.target.value)
                     }
-                    placeholder="SLETT"
-                    disabled={deletingWorkspace || !isOwnerOfActiveWorkspace}
+                    placeholder="AVSLUTT"
+                    disabled={deletingWorkspace || reactivatingWorkspace || !isOwnerOfActiveWorkspace}
                     className="rounded-xl border px-4 py-3 outline-none transition placeholder:text-[var(--color-muted)] disabled:cursor-not-allowed disabled:opacity-60"
                     style={{
                       borderColor: "rgba(220, 38, 38, 0.35)",
@@ -1726,7 +1845,7 @@ export default function ProfileForm({
                   />
                 </label>
 
-                <div className="flex justify-start">
+                <div className="flex flex-wrap gap-3">
                   <button
                     type="button"
                     onClick={performDeleteWorkspace}
@@ -1736,9 +1855,43 @@ export default function ProfileForm({
                       backgroundColor: "#dc2626",
                     }}
                   >
-                    {deletingWorkspace ? "Sletter..." : "Slett workspace"}
+                    {deletingWorkspace ? "Avslutter..." : "Avslutt medlemskap"}
                   </button>
+
+                  {selectedMembershipIsCanceled ? (
+                    <button
+                      type="button"
+                      onClick={performReactivateWorkspace}
+                      disabled={!canReactivateWorkspace}
+                      className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                      style={{
+                        border: "1px solid var(--color-success-text)",
+                        backgroundColor: "rgba(22, 163, 74, 0.12)",
+                        color: "var(--color-success-text)",
+                      }}
+                    >
+                      {reactivatingWorkspace
+                        ? "Reaktiverer..."
+                        : "Reaktiver medlemskap"}
+                    </button>
+                  ) : null}
                 </div>
+
+                {selectedMembershipIsCanceled ? (
+                  <div
+                    className="rounded-xl border px-4 py-3 text-sm"
+                    style={{
+                      borderColor: "var(--color-success-bg)",
+                      backgroundColor: "rgba(22, 163, 74, 0.08)",
+                      color: "var(--color-success-text)",
+                    }}
+                  >
+                    Medlemskapet er avsluttet, men kan fortsatt reaktiveres før
+                    perioden er over. Trykk på{" "}
+                    <span className="font-semibold">Reaktiver medlemskap</span>{" "}
+                    for å avbryte automatisk sletting.
+                  </div>
+                ) : null}
 
                 {deletableWorkspace ? (
                   <div
@@ -1749,7 +1902,9 @@ export default function ProfileForm({
                       color: "var(--color-danger-text)",
                     }}
                   >
-                    Du er i ferd med å slette{" "}
+                    {selectedMembershipIsCanceled
+                      ? "Medlemskapet er allerede avsluttet for "
+                      : "Du er i ferd med å avslutte medlemskapet for "}
                     <span className="font-semibold">
                       {deletableWorkspace.organization.name}
                     </span>

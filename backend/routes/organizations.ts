@@ -67,8 +67,8 @@ const updateMemberRoleBodySchema = z.object({
 });
 
 const deleteOrganizationBodySchema = z.object({
-  confirmationText: z.string().trim().refine((value) => value === "SLETT", {
-    message: "Skriv SLETT for å bekrefte sletting",
+  confirmationText: z.string().trim().refine((value) => value === "AVSLUTT", {
+    message: "Skriv AVSLUTT for å bekrefte avslutning",
   }),
 });
 
@@ -1703,6 +1703,153 @@ router.delete(
   }
 );
 
+router.patch(
+  "/:organizationId/reactivate",
+  requireAuth,
+  sensitiveActionLimiter,
+  async (req: AuthenticatedRequest, res) => {
+    try {
+      const parsedParams = organizationIdParamSchema.safeParse(req.params);
+
+      if (!parsedParams.success) {
+        return res.status(400).json({
+          ok: false,
+          error: getFirstZodError(parsedParams.error),
+        });
+      }
+
+      const { organizationId } = parsedParams.data;
+
+      const access = await requireOrganizationRole(
+        req,
+        organizationId,
+        [MemberRole.OWNER]
+      );
+
+      if (access.error || !access.user || !access.membership) {
+        return res.status(access.error!.status).json(access.error!.body);
+      }
+
+      const organization = await prisma.organization.findUnique({
+        where: {
+          id: organizationId,
+        },
+        include: {
+          subscription: true,
+        },
+      });
+
+      if (!organization) {
+        return res.status(404).json({
+          ok: false,
+          error: "Fant ikke workspace",
+        });
+      }
+
+      const subscription = organization.subscription;
+
+      if (!subscription) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Dette workspace-et har ikke et medlemskap som kan reaktiveres.",
+        });
+      }
+
+      if (
+        subscription.status === SubscriptionStatus.PAST_DUE ||
+        subscription.status === SubscriptionStatus.UNPAID
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Betalingen er ikke gjennomført. Oppdater betaling før medlemskapet kan reaktiveres.",
+        });
+      }
+
+      if (
+        subscription.status !== SubscriptionStatus.ACTIVE &&
+        subscription.status !== SubscriptionStatus.TRIALING
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Dette medlemskapet er ikke aktivt og kan derfor ikke reaktiveres her.",
+        });
+      }
+
+      if (!subscription.cancelAtPeriodEnd && !organization.scheduledDeletionAt) {
+        return res.status(200).json({
+          ok: true,
+          message: "Medlemskapet er allerede aktivt.",
+          organizationId,
+          cancelAtPeriodEnd: false,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          scheduledDeletionAt: null,
+        });
+      }
+
+      const updatedOrganization = await prisma.$transaction(async (tx) => {
+        await tx.subscription.update({
+          where: {
+            organizationId,
+          },
+          data: {
+            cancelAtPeriodEnd: false,
+          },
+        });
+
+        return tx.organization.update({
+          where: {
+            id: organizationId,
+          },
+          data: {
+            deletionRequestedAt: null,
+            scheduledDeletionAt: null,
+            deletedAt: null,
+          },
+          include: {
+            subscription: true,
+          },
+        });
+      });
+
+      await logAdminEvent({
+        actorUserId: access.user.id,
+        actorEmail: access.user.email,
+        action: "ORGANIZATION_CANCELLATION_REVERSED",
+        targetType: "organization",
+        targetId: organizationId,
+        organizationId,
+        metadata: {
+          organizationName: organization.name,
+          subscriptionPlan: subscription.plan,
+          subscriptionStatus: subscription.status,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+        },
+      });
+
+      return res.status(200).json({
+        ok: true,
+        message: "Medlemskapet er reaktivert.",
+        organizationId,
+        cancelAtPeriodEnd: false,
+        currentPeriodEnd:
+          updatedOrganization.subscription?.currentPeriodEnd ??
+          subscription.currentPeriodEnd,
+        scheduledDeletionAt: null,
+      });
+    } catch (error) {
+      console.error("Reactivate organization membership error:", error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Kunne ikke reaktivere medlemskapet",
+      });
+    }
+  }
+);
+
 router.delete(
   "/:organizationId",
   requireAuth,
@@ -1738,7 +1885,7 @@ router.delete(
         return res.status(access.error!.status).json(access.error!.body);
       }
 
-      const organizationBeforeDelete = await prisma.organization.findUnique({
+      const organization = await prisma.organization.findUnique({
         where: {
           id: organizationId,
         },
@@ -1754,43 +1901,95 @@ router.delete(
         },
       });
 
-      let nextActiveOrganizationId: string | null = null;
+      if (!organization) {
+        return res.status(404).json({
+          ok: false,
+          error: "Fant ikke workspace",
+        });
+      }
 
-      await prisma.$transaction(async (tx) => {
-        const usersWithActiveWorkspace = await tx.user.findMany({
+      const subscription = organization.subscription;
+
+      if (!subscription) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Dette workspace-et har ikke et aktivt medlemskap som kan avsluttes automatisk.",
+        });
+      }
+
+      if (
+        subscription.status === SubscriptionStatus.PAST_DUE ||
+        subscription.status === SubscriptionStatus.UNPAID
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Betalingen er ikke gjennomført. Workspace-et slettes ikke automatisk. Oppdater betaling eller kontakt support.",
+        });
+      }
+
+      if (
+        subscription.status !== SubscriptionStatus.ACTIVE &&
+        subscription.status !== SubscriptionStatus.TRIALING
+      ) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Dette medlemskapet er ikke aktivt og kan derfor ikke avsluttes på vanlig måte.",
+        });
+      }
+
+      if (!subscription.currentPeriodEnd) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Medlemskapet mangler sluttdato for perioden. Kan ikke planlegge automatisk sletting.",
+        });
+      }
+
+      const now = new Date();
+
+      if (subscription.currentPeriodEnd.getTime() <= now.getTime()) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Den betalte perioden er allerede utløpt. Workspace-et slettes ikke automatisk. Kontakt support.",
+        });
+      }
+
+      if (subscription.cancelAtPeriodEnd && organization.scheduledDeletionAt) {
+        return res.status(200).json({
+          ok: true,
+          message: "Medlemskapet er allerede avsluttet.",
+          organizationId,
+          cancelAtPeriodEnd: true,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          scheduledDeletionAt: organization.scheduledDeletionAt,
+        });
+      }
+
+      const updatedOrganization = await prisma.$transaction(async (tx) => {
+        await tx.subscription.update({
           where: {
-            activeOrganizationId: organizationId,
+            organizationId,
           },
-          include: {
-            memberships: true,
+          data: {
+            cancelAtPeriodEnd: true,
           },
         });
 
-        for (const affectedUser of usersWithActiveWorkspace) {
-          const fallbackMembership = affectedUser.memberships.find(
-            (item) => item.organizationId !== organizationId
-          );
-
-          const fallbackOrganizationId =
-            fallbackMembership?.organizationId ?? null;
-
-          if (affectedUser.id === access.user.id) {
-            nextActiveOrganizationId = fallbackOrganizationId;
-          }
-
-          await tx.user.update({
-            where: {
-              id: affectedUser.id,
-            },
-            data: {
-              activeOrganizationId: fallbackOrganizationId,
-            },
-          });
-        }
-
-        await tx.organization.delete({
+        return tx.organization.update({
           where: {
             id: organizationId,
+          },
+          data: {
+            deletionRequestedAt: now,
+            scheduledDeletionAt: subscription.currentPeriodEnd,
+            deletedAt: null,
+          },
+          include: {
+            subscription: true,
           },
         });
       });
@@ -1798,37 +1997,41 @@ router.delete(
       await logAdminEvent({
         actorUserId: access.user.id,
         actorEmail: access.user.email,
-        action: "ORGANIZATION_DELETED",
+        action: "ORGANIZATION_CANCELLATION_SCHEDULED",
         targetType: "organization",
         targetId: organizationId,
         organizationId,
         metadata: {
-          organizationName: organizationBeforeDelete?.name ?? null,
-          subscriptionPlan: organizationBeforeDelete?.subscription?.plan ?? null,
-          subscriptionStatus:
-            organizationBeforeDelete?.subscription?.status ?? null,
-          memberCount: organizationBeforeDelete?._count.members ?? 0,
-          socialAccountsCount: organizationBeforeDelete?._count.socialAccounts ?? 0,
-          contentPostsCount: organizationBeforeDelete?._count.contentPosts ?? 0,
-          nextActiveOrganizationId,
+          organizationName: organization.name,
+          subscriptionPlan: subscription.plan,
+          subscriptionStatus: subscription.status,
+          currentPeriodEnd: subscription.currentPeriodEnd,
+          scheduledDeletionAt: subscription.currentPeriodEnd,
+          memberCount: organization._count.members,
+          socialAccountsCount: organization._count.socialAccounts,
+          contentPostsCount: organization._count.contentPosts,
         },
       });
 
       return res.status(200).json({
         ok: true,
-        message: "Workspace, tilknyttet data og abonnement er slettet",
-        activeOrganizationId: nextActiveOrganizationId,
-        deletedOrganizationId: organizationId,
+        message:
+          "Medlemskapet er avsluttet. Du beholder tilgang frem til perioden er over. Etter dette slettes workspace og tilknyttet data automatisk.",
+        organizationId,
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: subscription.currentPeriodEnd,
+        scheduledDeletionAt: updatedOrganization.scheduledDeletionAt,
       });
     } catch (error) {
-      console.error("Delete organization error:", error);
+      console.error("Schedule organization cancellation error:", error);
 
       return res.status(500).json({
         ok: false,
-        error: "Kunne ikke slette workspace",
+        error: "Kunne ikke avslutte medlemskapet",
       });
     }
   }
 );
+
 
 export default router;
