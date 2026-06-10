@@ -50,7 +50,9 @@ export async function DELETE(request: Request, context: RouteContext) {
     const { organizationId } = await context.params;
     const bodyText = await request.text();
 
-    const response = await fetch(`${API_URL}/organizations/${organizationId}`, {
+    const backendUrl = `${API_URL}/organizations/${organizationId}`;
+
+    const response = await fetch(backendUrl, {
       method: "DELETE",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -61,11 +63,33 @@ export async function DELETE(request: Request, context: RouteContext) {
     });
 
     const responseText = await response.text();
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!contentType.includes("application/json")) {
+      console.error("[DELETE workspace] Backend svarte ikke med JSON:", {
+        backendUrl,
+        status: response.status,
+        contentType,
+        responsePreview: responseText.slice(0, 500),
+      });
+
+      return Response.json(
+        {
+          ok: false,
+          error:
+            response.status === 404
+              ? "Backend fant ikke organizations-routen. Sjekk backend/server.ts."
+              : "Backend svarte med HTML i stedet for JSON. Sjekk backend-terminalen.",
+          backendStatus: response.status,
+        },
+        { status: response.status || 500 }
+      );
+    }
 
     return new Response(responseText, {
       status: response.status,
       headers: {
-        "Content-Type": response.headers.get("content-type") || "application/json",
+        "Content-Type": "application/json",
       },
     });
   } catch (error) {
@@ -74,7 +98,10 @@ export async function DELETE(request: Request, context: RouteContext) {
     return Response.json(
       {
         ok: false,
-        error: "Intern feil i delete-route",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Intern feil i delete-route",
       },
       { status: 500 }
     );
