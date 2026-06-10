@@ -3,6 +3,83 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import AccountTabs from "../../components/AccountTabs";
 import AppThemeShell from "../../components/AppThemeShell";
+import { getServerApiUrl } from "../../lib/api";
+
+type SubscriptionInfo = {
+  id: string;
+  plan: string;
+  status: string;
+  currentPeriodStart: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+} | null;
+
+type OrganizationItem = {
+  membershipId: string;
+  role: string;
+  organization: {
+    id: string;
+    name: string;
+    slug: string | null;
+    createdAt: string;
+    updatedAt: string;
+    memberCount: number;
+    memberLimit: number;
+    subscription: SubscriptionInfo;
+  };
+  isActive: boolean;
+};
+
+type OrganizationsResponse = {
+  ok: boolean;
+  activeOrganizationId: string | null;
+  organizations: OrganizationItem[];
+};
+
+const API_URL = getServerApiUrl();
+
+async function getAuthHeaders() {
+  const { getToken } = await auth();
+  const token = await getToken();
+
+  if (!token) {
+    throw new Error("Fant ikke auth-token");
+  }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function getOrganizations(): Promise<OrganizationsResponse> {
+  try {
+    const headers = await getAuthHeaders();
+
+    const res = await fetch(`${API_URL}/organizations`, {
+      cache: "no-store",
+      headers,
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      console.error("GET /organizations feilet i account layout:", res.status, text);
+      return {
+        ok: false,
+        activeOrganizationId: null,
+        organizations: [],
+      };
+    }
+
+    return res.json();
+  } catch (error) {
+    console.error("Kunne ikke hente workspaces i account layout:", error);
+    return {
+      ok: false,
+      activeOrganizationId: null,
+      organizations: [],
+    };
+  }
+}
 
 export default async function AccountLayout({
   children,
@@ -14,6 +91,8 @@ export default async function AccountLayout({
   if (!userId) {
     redirect("/sign-in");
   }
+
+  const organizationsResponse = await getOrganizations();
 
   return (
     <AppThemeShell>
@@ -85,7 +164,10 @@ export default async function AccountLayout({
             }}
           >
             <div className="flex flex-col gap-6">
-              <AccountTabs />
+              <AccountTabs
+                organizations={organizationsResponse.organizations ?? []}
+                activeOrganizationId={organizationsResponse.activeOrganizationId}
+              />
               {children}
             </div>
           </section>

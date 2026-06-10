@@ -45,6 +45,7 @@ type SocialAccountsResponse = {
   };
   limits: {
     monthlyAccountAdds: number;
+    activeAccountLimit: number;
   };
   usage: {
     activeAccounts: number;
@@ -149,6 +150,7 @@ export default async function TrackedAccountsPage() {
       initialAccounts={trackedAccounts.accounts}
       activeWorkspaceName={activeWorkspace?.organization.name ?? "Workspace"}
       monthlyAddLimit={trackedAccounts.limits.monthlyAccountAdds}
+      activeAccountLimit={trackedAccounts.limits.activeAccountLimit}
       initialAddsThisPeriod={trackedAccounts.usage.accountsAddedThisPeriod}
       nextAvailableAddAt={trackedAccounts.usage.nextAvailableAddAt}
       canAddAccounts={trackedAccounts.permissions.canAddAccounts}

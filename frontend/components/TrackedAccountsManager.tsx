@@ -36,6 +36,7 @@ type TrackedAccountsManagerProps = {
   initialAccounts: SocialAccount[];
   activeWorkspaceName: string;
   monthlyAddLimit: number;
+  activeAccountLimit: number;
   initialAddsThisPeriod: number;
   nextAvailableAddAt: string | null;
   canAddAccounts: boolean;
@@ -219,6 +220,7 @@ export default function TrackedAccountsManager({
   initialAccounts,
   activeWorkspaceName,
   monthlyAddLimit,
+  activeAccountLimit,
   initialAddsThisPeriod,
   nextAvailableAddAt: initialNextAvailableAddAt,
   canAddAccounts,
@@ -663,21 +665,12 @@ export default function TrackedAccountsManager({
             </span>
             <span>Rolle: {role ?? "Ukjent"}</span>
             <span>
-              Lagt til siste 30 dager:{" "}
-              <span
-                className="font-semibold"
-                style={{ color: "var(--color-text)" }}
-              >
-                {addsThisPeriod} / {monthlyAddLimit}
-              </span>
-            </span>
-            <span>
               Aktive kontoer nå:{" "}
               <span
                 className="font-semibold"
                 style={{ color: "var(--color-text)" }}
               >
-                {accounts.length}
+                {accounts.length} / {activeAccountLimit}
               </span>
             </span>
           </div>

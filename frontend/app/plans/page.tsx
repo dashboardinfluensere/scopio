@@ -74,11 +74,15 @@ export default async function PlansPage() {
           <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
             <div className="max-w-4xl">
               <div className="inline-flex items-center rounded-full border border-[#FED7C9] bg-[#FFF4EF] px-4 py-2 text-sm font-medium text-[#C2410C]">
-                {isOnboardingMode ? "Godkjent – neste steg" : "Gratisperioden er over"}
+                {isOnboardingMode
+                  ? "Godkjent – neste steg"
+                  : "Gratisperioden er over"}
               </div>
 
               <h1 className="mt-5 max-w-4xl text-4xl font-semibold tracking-tight lg:text-6xl">
-                {isOnboardingMode ? "Velg plan" : "Gratisperioden din er utløpt"}
+                {isOnboardingMode
+                  ? "Velg plan"
+                  : "Gratisperioden din er utløpt"}
               </h1>
 
               <p className="mt-5 max-w-2xl text-base leading-8 text-[#475569]">

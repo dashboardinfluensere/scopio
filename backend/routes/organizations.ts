@@ -111,6 +111,54 @@ function getMemberLimitFromPlan(plan: SubscriptionPlan | null | undefined) {
   return 1;
 }
 
+function getActiveAccountLimitFromSubscription(params: {
+  plan: SubscriptionPlan | null | undefined;
+  status: SubscriptionStatus | null | undefined;
+}) {
+  if (
+    params.plan === SubscriptionPlan.PRO &&
+    params.status === SubscriptionStatus.TRIALING
+  ) {
+    return 1;
+  }
+
+  if (params.plan === SubscriptionPlan.BUSINESS) {
+    return 4;
+  }
+
+  if (params.plan === SubscriptionPlan.PRO) {
+    return 2;
+  }
+
+  if (params.plan === SubscriptionPlan.STARTER) {
+    return 1;
+  }
+
+  return 1;
+}
+
+function getPlanDisplayName(params: {
+  plan: SubscriptionPlan | null | undefined;
+  status: SubscriptionStatus | null | undefined;
+}) {
+  if (
+    params.plan === SubscriptionPlan.PRO &&
+    params.status === SubscriptionStatus.TRIALING
+  ) {
+    return "Free Trial";
+  }
+
+  if (params.plan === SubscriptionPlan.BUSINESS) {
+    return "Business";
+  }
+
+  if (params.plan === SubscriptionPlan.PRO) {
+    return "Pro";
+  }
+
+  return "denne planen";
+}
+
 function resolveSubscriptionFromSelectedPlan(selectedPlanRaw: unknown) {
   const selectedPlan = String(selectedPlanRaw ?? "").trim().toLowerCase();
 
@@ -891,11 +939,71 @@ router.post(
         parsedBody.data.selectedPlan
       );
 
+      const isSamePlan =
+        currentSubscription.plan === subscriptionInput.plan &&
+        currentSubscription.status === subscriptionInput.status;
+
+      if (isSamePlan) {
+        const planName = getPlanDisplayName({
+          plan: currentSubscription.plan,
+          status: currentSubscription.status,
+        });
+
+        return res.status(409).json({
+          ok: false,
+          error: `Dette workspacet er allerede på ${planName}. Velg en annen plan.`,
+          code: "PLAN_ALREADY_ACTIVE",
+        });
+      }
+
+      const newActiveAccountLimit = getActiveAccountLimitFromSubscription({
+        plan: subscriptionInput.plan,
+        status: subscriptionInput.status,
+      });
+      const activeAccountsCount = user.activeOrganization.socialAccounts.length;
+
+      if (activeAccountsCount > newActiveAccountLimit) {
+        const accountsToRemove = activeAccountsCount - newActiveAccountLimit;
+        const planName = getPlanDisplayName({
+          plan: subscriptionInput.plan,
+          status: subscriptionInput.status,
+        });
+
+        return res.status(409).json({
+          ok: false,
+          error: `Dette workspacet tracker ${activeAccountsCount} aktive kontoer. ${planName} tillater maks ${newActiveAccountLimit}. Fjern ${accountsToRemove} konto${accountsToRemove === 1 ? "" : "er"} før du kan bytte til ${planName}.`,
+          code: "PLAN_ACCOUNT_LIMIT_EXCEEDED",
+          activeAccountsCount,
+          activeAccountLimit: newActiveAccountLimit,
+          accountsToRemove,
+        });
+      }
+
+      const newMemberLimit = getMemberLimitFromPlan(subscriptionInput.plan);
+      const memberCount = user.activeOrganization._count.members;
+
+      if (memberCount > newMemberLimit) {
+        const membersToRemove = memberCount - newMemberLimit;
+        const planName = getPlanDisplayName({
+          plan: subscriptionInput.plan,
+          status: subscriptionInput.status,
+        });
+
+        return res.status(409).json({
+          ok: false,
+          error: `Dette workspacet har ${memberCount} medlemmer. ${planName} tillater maks ${newMemberLimit}. Fjern ${membersToRemove} medlem${membersToRemove === 1 ? "" : "mer"} før du kan bytte til ${planName}.`,
+          code: "PLAN_MEMBER_LIMIT_EXCEEDED",
+          memberCount,
+          memberLimit: newMemberLimit,
+          membersToRemove,
+        });
+      }
+
       const wasTrialing =
         currentSubscription.status === SubscriptionStatus.TRIALING ||
         currentSubscription.status === SubscriptionStatus.CANCELED;
 
-      const hasActiveAccounts = user.activeOrganization.socialAccounts.length > 0;
+      const hasActiveAccounts = activeAccountsCount > 0;
 
       const requiresHistoricalResync = wasTrialing && hasActiveAccounts;
 
@@ -935,7 +1043,7 @@ router.post(
       await logAdminEvent({
         actorUserId: user.id,
         actorEmail: user.email,
-        action: "ORGANIZATION_UPGRADED",
+        action: "ORGANIZATION_PLAN_CHANGED",
         targetType: "organization",
         targetId: user.activeOrganizationId,
         organizationId: user.activeOrganizationId,
@@ -951,8 +1059,8 @@ router.post(
       return res.status(200).json({
         ok: true,
         message: requiresHistoricalResync
-          ? "Aktivt workspace oppgradert. Historisk sync er markert for ny kjøring."
-          : "Aktivt workspace oppgradert",
+          ? "Planen er endret. Historisk sync er markert for ny kjøring."
+          : "Planen er endret",
         activeOrganizationId: user.activeOrganizationId,
         requiresHistoricalResync,
         organization: {
@@ -963,6 +1071,10 @@ router.post(
           updatedAt: user.activeOrganization.updatedAt,
           memberCount: user.activeOrganization._count.members,
           memberLimit: getMemberLimitFromPlan(updatedSubscription.plan),
+          activeAccountLimit: getActiveAccountLimitFromSubscription({
+            plan: updatedSubscription.plan,
+            status: updatedSubscription.status,
+          }),
           subscription: {
             id: updatedSubscription.id,
             plan: updatedSubscription.plan,
@@ -978,7 +1090,7 @@ router.post(
 
       return res.status(500).json({
         ok: false,
-        error: "Kunne ikke oppgradere aktivt workspace",
+        error: "Kunne ikke endre plan for aktivt workspace",
       });
     }
   }

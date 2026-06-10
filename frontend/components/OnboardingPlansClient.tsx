@@ -115,7 +115,6 @@ export default function OnboardingPlansClient({
   const authedFetch = useAuthedFetch();
 
   const defaultPlan: PlanKey = mode === "upgrade" ? "pro" : "pro-trial";
-
   const [selectedPlan, setSelectedPlan] = useState<PlanKey>(defaultPlan);
 
   const [joinWorkspaceId, setJoinWorkspaceId] = useState("");
@@ -133,11 +132,6 @@ export default function OnboardingPlansClient({
   const [joinError, setJoinError] = useState("");
   const [upgradeError, setUpgradeError] = useState("");
   const [workspaceError, setWorkspaceError] = useState("");
-
-  const visiblePlans =
-    mode === "upgrade"
-      ? plans.filter((plan) => plan.key !== "pro-trial")
-      : plans;
 
   const selectedPlanMeta = getPlanBackendPayload(selectedPlan);
 
@@ -377,12 +371,8 @@ export default function OnboardingPlansClient({
     <>
       <div className="grid gap-8">
         <section className="flex justify-center">
-          <div
-            className={`grid w-full max-w-6xl gap-8 lg:gap-10 ${
-              visiblePlans.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-3"
-            }`}
-          >
-            {visiblePlans.map((plan) => {
+          <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-3 lg:gap-10">
+            {plans.map((plan) => {
               const active = selectedPlan === plan.key;
               const price = getPriceBreakdown(plan.priceExVat);
 

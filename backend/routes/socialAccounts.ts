@@ -128,6 +128,13 @@ function getMonthlyAccountAddLimit(params: {
   return 1;
 }
 
+function getActiveAccountLimit(params: {
+  plan: SubscriptionPlan | null | undefined;
+  status: SubscriptionStatus | null | undefined;
+}) {
+  return getMonthlyAccountAddLimit(params);
+}
+
 function hasSubscriptionAccess(
   status: SubscriptionStatus | null | undefined,
   currentPeriodEnd?: Date | string | null
@@ -355,6 +362,10 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       plan: subscription?.plan,
       status: subscription?.status,
     });
+    const activeAccountLimit = getActiveAccountLimit({
+      plan: subscription?.plan,
+      status: subscription?.status,
+    });
     const hasAccess = hasSubscriptionAccess(
       subscription?.status,
       subscription?.currentPeriodEnd
@@ -381,7 +392,8 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
         canAddAccounts:
           hasAccess &&
           hasRole(access.role, [MemberRole.OWNER, MemberRole.ADMIN]) &&
-          addsThisPeriod < accountLimit,
+          addsThisPeriod < accountLimit &&
+          mappedAccounts.length < activeAccountLimit,
         canDeleteAccounts: hasRole(access.role, [MemberRole.OWNER]),
         canRetryFailedScrapes:
           hasAccess &&
@@ -389,6 +401,7 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       },
       limits: {
         monthlyAccountAdds: accountLimit,
+        activeAccountLimit,
       },
       usage: {
         activeAccounts: mappedAccounts.length,
@@ -511,6 +524,10 @@ router.post(
         plan: subscription?.plan,
         status: subscription?.status,
       });
+      const activeAccountLimit = getActiveAccountLimit({
+        plan: subscription?.plan,
+        status: subscription?.status,
+      });
       const hasAccess = hasSubscriptionAccess(
         subscription?.status,
         subscription?.currentPeriodEnd
@@ -538,6 +555,28 @@ router.post(
         });
       }
 
+      const activeAccountsCount = await prisma.socialAccount.count({
+        where: {
+          organizationId: access.organizationId,
+          isActive: true,
+        },
+      });
+
+      if (activeAccountsCount >= activeAccountLimit) {
+        return res.status(403).json({
+          ok: false,
+          error: `Dette workspace-et har nådd maks antall aktive kontoer (${activeAccountLimit}).`,
+          code: "ACTIVE_ACCOUNT_LIMIT_REACHED",
+          limits: {
+            monthlyAccountAdds: addLimit,
+            activeAccountLimit,
+          },
+          usage: {
+            activeAccounts: activeAccountsCount,
+          },
+        });
+      }
+
       const willConsumeQuota = !existingAccount;
 
       if (willConsumeQuota && addsThisPeriod >= addLimit) {
@@ -547,8 +586,10 @@ router.post(
           code: "MONTHLY_ACCOUNT_ADD_LIMIT_REACHED",
           limits: {
             monthlyAccountAdds: addLimit,
+            activeAccountLimit,
           },
           usage: {
+            activeAccounts: activeAccountsCount,
             accountsAddedThisPeriod: addsThisPeriod,
             monthlyAddsRemaining: 0,
             nextAvailableAddAt: getNextAvailableAddAtFromOldest(
@@ -668,8 +709,10 @@ router.post(
         socialAccount: result,
         limits: {
           monthlyAccountAdds: addLimit,
+          activeAccountLimit,
         },
         usage: {
+          activeAccounts: activeAccountsCount + 1,
           accountsAddedThisPeriod: addsThisPeriod + (willConsumeQuota ? 1 : 0),
           monthlyAddsRemaining: Math.max(
             addLimit - (addsThisPeriod + (willConsumeQuota ? 1 : 0)),
@@ -787,6 +830,10 @@ router.post(
         plan: subscription?.plan,
         status: subscription?.status,
       });
+      const activeAccountLimit = getActiveAccountLimit({
+        plan: subscription?.plan,
+        status: subscription?.status,
+      });
       const hasAccess = hasSubscriptionAccess(
         subscription?.status,
         subscription?.currentPeriodEnd
@@ -879,6 +926,32 @@ router.post(
         return !existing;
       });
 
+      const currentlyActiveKeys = new Set(
+        organization.socialAccounts
+          .filter((account) => account.isActive)
+          .map((account) => `${account.platform}:${account.accountHandle}`)
+      );
+      const activeAccountsAfterSubmit = new Set(currentlyActiveKeys);
+
+      for (const account of dedupedAccounts) {
+        activeAccountsAfterSubmit.add(`${account.platform}:${account.accountHandle}`);
+      }
+
+      if (activeAccountsAfterSubmit.size > activeAccountLimit) {
+        return res.status(403).json({
+          ok: false,
+          error: `Dette workspace-et har nådd maks antall aktive kontoer (${activeAccountLimit}).`,
+          code: "ACTIVE_ACCOUNT_LIMIT_REACHED",
+          limits: {
+            monthlyAccountAdds: addLimit,
+            activeAccountLimit,
+          },
+          usage: {
+            activeAccounts: currentlyActiveKeys.size,
+          },
+        });
+      }
+
       if (addsThisPeriod + accountsThatConsumeQuota.length > addLimit) {
         return res.status(403).json({
           ok: false,
@@ -886,8 +959,10 @@ router.post(
           code: "MONTHLY_ACCOUNT_ADD_LIMIT_REACHED",
           limits: {
             monthlyAccountAdds: addLimit,
+            activeAccountLimit,
           },
           usage: {
+            activeAccounts: currentlyActiveKeys.size,
             accountsAddedThisPeriod: addsThisPeriod,
             monthlyAddsRemaining: Math.max(addLimit - addsThisPeriod, 0),
             nextAvailableAddAt: getNextAvailableAddAtFromOldest(
