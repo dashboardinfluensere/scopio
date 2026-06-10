@@ -207,10 +207,33 @@ function getJobBadgeClasses(status: JobStatus) {
   return "border-[var(--color-border)] bg-[var(--color-surface-soft)] text-[var(--color-muted)]";
 }
 
+function normalizeSocialAccount(
+  account: SocialAccount & {
+    latestInitialJob?: LatestJobSummary | null;
+    latestDailyJob?: LatestJobSummary | null;
+    retry?: {
+      canRetryInitial?: boolean;
+      canRetryDaily?: boolean;
+    } | null;
+  }
+): SocialAccount {
+  return {
+    ...account,
+    latestInitialJob: account.latestInitialJob ?? null,
+    latestDailyJob: account.latestDailyJob ?? null,
+    retry: {
+      canRetryInitial: account.retry?.canRetryInitial ?? false,
+      canRetryDaily: account.retry?.canRetryDaily ?? false,
+    },
+  };
+}
+
 function hasPendingOrRunningWork(account: SocialAccount) {
   return (
     account.initialSyncStatus === "PENDING" ||
     account.initialSyncStatus === "RUNNING" ||
+    account.latestInitialJob?.status === "PENDING" ||
+    account.latestInitialJob?.status === "RUNNING" ||
     account.latestDailyJob?.status === "PENDING" ||
     account.latestDailyJob?.status === "RUNNING"
   );
@@ -229,7 +252,9 @@ export default function TrackedAccountsManager({
 }: TrackedAccountsManagerProps) {
   const { getToken } = useAuth();
 
-  const [accounts, setAccounts] = useState(initialAccounts);
+  const [accounts, setAccounts] = useState(() =>
+    initialAccounts.map(normalizeSocialAccount)
+  );
   const [platform, setPlatform] = useState<Platform>("TIKTOK");
   const [accountInput, setAccountInput] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -304,7 +329,7 @@ export default function TrackedAccountsManager({
       throw new Error("Ugyldig svar ved oppdatering av kontoer");
     }
 
-    setAccounts(data.accounts);
+    setAccounts(data.accounts.map(normalizeSocialAccount));
 
     if (typeof data.usage?.accountsAddedThisPeriod === "number") {
       setAddsThisPeriod(data.usage.accountsAddedThisPeriod);
@@ -395,7 +420,7 @@ export default function TrackedAccountsManager({
           (account) => account.id !== data.socialAccount!.id
         );
 
-        return [data.socialAccount!, ...withoutSameId];
+        return [normalizeSocialAccount(data.socialAccount!), ...withoutSameId];
       });
 
       if (typeof data.usage?.accountsAddedThisPeriod === "number") {
@@ -1059,7 +1084,7 @@ export default function TrackedAccountsManager({
                                     {getInitialSyncLabel(account.initialSyncStatus)}
                                   </span>
 
-                                  {account.retry.canRetryInitial &&
+                                  {account.retry?.canRetryInitial &&
                                   canRetryFailedScrapes ? (
                                     <button
                                       type="button"
@@ -1110,7 +1135,7 @@ export default function TrackedAccountsManager({
                                       {getJobStatusLabel(account.latestDailyJob.status)}
                                     </span>
 
-                                    {account.retry.canRetryDaily && canRetryFailedScrapes ? (
+                                    {account.retry?.canRetryDaily && canRetryFailedScrapes ? (
                                       <button
                                         type="button"
                                         onClick={() => handleRetry(account, "DAILY")}

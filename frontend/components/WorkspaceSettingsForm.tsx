@@ -92,7 +92,9 @@ function getPlanDescription(subscription: SubscriptionInfo) {
     const daysLeft = getDaysLeft(subscription.currentPeriodEnd);
 
     if (typeof daysLeft === "number") {
-      return `Prøveperioden er aktiv. ${daysLeft} dag${daysLeft === 1 ? "" : "er"} igjen.`;
+      return `Prøveperioden er aktiv. ${daysLeft} dag${
+        daysLeft === 1 ? "" : "er"
+      } igjen.`;
     }
 
     return "Prøveperioden er aktiv.";
@@ -126,6 +128,7 @@ export default function WorkspaceSettingsForm({
   const [activeOrganizationId] = useState(initialActiveOrganizationId);
   const [workspaceError, setWorkspaceError] = useState("");
   const [workspaceSuccess, setWorkspaceSuccess] = useState("");
+  const [manualCancellationRequired, setManualCancellationRequired] = useState(false);
 
   const [ownerWorkspaceName, setOwnerWorkspaceName] = useState("");
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
@@ -154,13 +157,33 @@ export default function WorkspaceSettingsForm({
   const activePlanDescription = getPlanDescription(activeSubscription);
   const activeMemberCount = activeWorkspace?.organization.memberCount ?? 0;
   const activeMemberLimit = activeWorkspace?.organization.memberLimit ?? 0;
-  const isWorkspaceFull = activeMemberLimit > 0 && activeMemberCount >= activeMemberLimit;
+  const isWorkspaceFull =
+    activeMemberLimit > 0 && activeMemberCount >= activeMemberLimit;
 
   const deletableWorkspace = organizations.find(
     (item) => item.organization.id === deleteOrganizationId
   );
+
   const selectedSubscription = deletableWorkspace?.organization.subscription ?? null;
   const selectedMembershipIsCanceled = selectedSubscription?.cancelAtPeriodEnd === true;
+
+  const supportEmail = "Dmytro@Maliarchuk.no";
+  const supportSubject = "Avslutte medlemskap i Scopio";
+
+  const supportBody = `Hei!
+
+Jeg ønsker å avslutte medlemskapet mitt i Scopio.
+
+Workspace: ${deletableWorkspace?.organization.name ?? ""}
+Workspace-ID: ${deleteOrganizationId}
+
+Jeg ønsker at medlemskapet avsluttes og at tilknyttet workspace/data slettes.
+
+Mvh`;
+
+  const supportGmailHref = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+    supportEmail
+  )}&su=${encodeURIComponent(supportSubject)}&body=${encodeURIComponent(supportBody)}`;
 
   const canDeleteWorkspace =
     isOwnerOfActiveWorkspace &&
@@ -207,7 +230,19 @@ export default function WorkspaceSettingsForm({
     }
 
     if (!response.ok) {
-      setWorkspaceError(data?.error || "Kunne ikke avslutte medlemskapet.");
+      const errorMessage = data?.error || "Kunne ikke avslutte medlemskapet.";
+
+      if (
+        data?.code === "MANUAL_CANCELLATION_REQUIRED" ||
+        errorMessage.toLowerCase().includes("mangler sluttdato") ||
+        errorMessage.toLowerCase().includes("kan ikke planlegge automatisk sletting")
+      ) {
+        setWorkspaceError("");
+        setManualCancellationRequired(true);
+        return response;
+      }
+
+      setWorkspaceError(errorMessage);
       return response;
     }
 
@@ -215,7 +250,9 @@ export default function WorkspaceSettingsForm({
     const scheduledDeletionAt =
       typeof data?.scheduledDeletionAt === "string" ? data.scheduledDeletionAt : null;
     const currentPeriodEnd =
-      typeof data?.currentPeriodEnd === "string" ? data.currentPeriodEnd : scheduledDeletionAt;
+      typeof data?.currentPeriodEnd === "string"
+        ? data.currentPeriodEnd
+        : scheduledDeletionAt;
 
     setOrganizations((prev) =>
       prev.map((item) => {
@@ -394,10 +431,13 @@ export default function WorkspaceSettingsForm({
     try {
       setUpdatingWorkspacePassword(true);
 
-      const response = await authedFetch(`${API_URL}/organizations/${activeOrganizationId}/password`, {
-        method: "PATCH",
-        body: JSON.stringify({ password: trimmedPassword }),
-      });
+      const response = await authedFetch(
+        `${API_URL}/organizations/${activeOrganizationId}/password`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ password: trimmedPassword }),
+        }
+      );
 
       const data = await response.json();
 
@@ -508,6 +548,7 @@ export default function WorkspaceSettingsForm({
   async function performDeleteWorkspace() {
     setWorkspaceError("");
     setWorkspaceSuccess("");
+    setManualCancellationRequired(false);
 
     if (!deleteOrganizationId) {
       setWorkspaceError("Velg et medlemskap du vil avslutte.");
@@ -536,6 +577,7 @@ export default function WorkspaceSettingsForm({
   async function performReactivateWorkspace() {
     setWorkspaceError("");
     setWorkspaceSuccess("");
+    setManualCancellationRequired(false);
 
     if (!deleteOrganizationId) {
       setWorkspaceError("Velg et medlemskap du vil reaktivere.");
@@ -600,7 +642,10 @@ export default function WorkspaceSettingsForm({
     return (
       <section
         className="rounded-xl border p-6"
-        style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)" }}
+        style={{
+          borderColor: "var(--color-border)",
+          backgroundColor: "var(--color-surface)",
+        }}
       >
         <h2 className="text-2xl font-semibold" style={{ color: "var(--color-text)" }}>
           Workspace-innstillinger
@@ -616,7 +661,10 @@ export default function WorkspaceSettingsForm({
     <div className="grid gap-6">
       <section
         className="rounded-xl border p-6 shadow-sm"
-        style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)" }}
+        style={{
+          borderColor: "var(--color-border)",
+          backgroundColor: "var(--color-surface)",
+        }}
       >
         <div className="flex flex-col gap-2">
           <h2 className="text-2xl font-semibold" style={{ color: "var(--color-text)" }}>
@@ -630,9 +678,15 @@ export default function WorkspaceSettingsForm({
         <div className="mt-6 grid gap-4 lg:grid-cols-3">
           <div
             className="rounded-xl border p-4"
-            style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)" }}
+            style={{
+              borderColor: "var(--color-border)",
+              backgroundColor: "var(--color-surface-soft)",
+            }}
           >
-            <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+            <p
+              className="text-xs font-medium uppercase tracking-wide"
+              style={{ color: "var(--color-muted)" }}
+            >
               Workspace
             </p>
             <p className="mt-1 text-base font-semibold" style={{ color: "var(--color-text)" }}>
@@ -645,9 +699,15 @@ export default function WorkspaceSettingsForm({
 
           <div
             className="rounded-xl border p-4"
-            style={{ borderColor: "rgba(255, 106, 61, 0.22)", backgroundColor: "rgba(255, 106, 61, 0.08)" }}
+            style={{
+              borderColor: "rgba(255, 106, 61, 0.22)",
+              backgroundColor: "rgba(255, 106, 61, 0.08)",
+            }}
           >
-            <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--color-accent)" }}>
+            <p
+              className="text-xs font-medium uppercase tracking-wide"
+              style={{ color: "var(--color-accent)" }}
+            >
               Plan
             </p>
             <p className="mt-1 text-base font-semibold" style={{ color: "var(--color-text)" }}>
@@ -660,9 +720,15 @@ export default function WorkspaceSettingsForm({
 
           <div
             className="rounded-xl border p-4"
-            style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)" }}
+            style={{
+              borderColor: "var(--color-border)",
+              backgroundColor: "var(--color-surface-soft)",
+            }}
           >
-            <p className="text-xs font-medium uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+            <p
+              className="text-xs font-medium uppercase tracking-wide"
+              style={{ color: "var(--color-muted)" }}
+            >
               Medlemmer
             </p>
             <p className="mt-1 text-base font-semibold" style={{ color: "var(--color-text)" }}>
@@ -677,12 +743,13 @@ export default function WorkspaceSettingsForm({
         {isOwnerOfActiveWorkspace ? (
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
-            href="/account/workspace-settings/change-plan"
-            className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition"
-            style={{ backgroundColor: "var(--color-accent)" }}
+              href="/account/workspace-settings/change-plan"
+              className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition"
+              style={{ backgroundColor: "var(--color-accent)" }}
             >
-            Endre plan
+              Endre plan
             </Link>
+
             {isWorkspaceFull ? (
               <p className="text-sm" style={{ color: "var(--color-muted)" }}>
                 Du har nådd maks antall medlemmer for denne planen.
@@ -693,13 +760,26 @@ export default function WorkspaceSettingsForm({
       </section>
 
       {isOwnerOfActiveWorkspace ? (
-        <section className="rounded-xl border p-6 shadow-sm" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)" }}>
+        <section
+          className="rounded-xl border p-6 shadow-sm"
+          style={{
+            borderColor: "var(--color-border)",
+            backgroundColor: "var(--color-surface)",
+          }}
+        >
           <h3 className="text-xl font-semibold" style={{ color: "var(--color-text)" }}>
             Workspace
           </h3>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-2">
-            <form onSubmit={handleRenameWorkspace} className="grid gap-4 rounded-xl border p-4" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)" }}>
+            <form
+              onSubmit={handleRenameWorkspace}
+              className="grid gap-4 rounded-xl border p-4"
+              style={{
+                borderColor: "var(--color-border)",
+                backgroundColor: "var(--color-surface-soft)",
+              }}
+            >
               <label className="flex flex-col gap-2 text-sm" style={{ color: "var(--color-text)" }}>
                 <span className="font-medium">Navn på workspace</span>
                 <input
@@ -707,15 +787,36 @@ export default function WorkspaceSettingsForm({
                   onChange={(event) => setOwnerWorkspaceName(event.target.value)}
                   placeholder="F.eks. Scopio Studio"
                   className="rounded-xl border px-4 py-3 outline-none transition placeholder:text-[var(--color-muted)]"
-                  style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+                  style={{
+                    borderColor: "var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text)",
+                  }}
                 />
               </label>
-              <button type="submit" disabled={renamingWorkspace} className="inline-flex w-fit items-center justify-center rounded-xl border px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: "rgba(255, 106, 61, 0.35)", backgroundColor: "var(--color-surface)", color: "var(--color-accent)" }}>
+
+              <button
+                type="submit"
+                disabled={renamingWorkspace}
+                className="inline-flex w-fit items-center justify-center rounded-xl border px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                style={{
+                  borderColor: "rgba(255, 106, 61, 0.35)",
+                  backgroundColor: "var(--color-surface)",
+                  color: "var(--color-accent)",
+                }}
+              >
                 {renamingWorkspace ? "Oppdaterer..." : "Oppdater navn"}
               </button>
             </form>
 
-            <form onSubmit={handleUpdateWorkspacePassword} className="grid gap-4 rounded-xl border p-4" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)" }}>
+            <form
+              onSubmit={handleUpdateWorkspacePassword}
+              className="grid gap-4 rounded-xl border p-4"
+              style={{
+                borderColor: "var(--color-border)",
+                backgroundColor: "var(--color-surface-soft)",
+              }}
+            >
               <label className="flex flex-col gap-2 text-sm" style={{ color: "var(--color-text)" }}>
                 <span className="font-medium">Nytt workspace-passord</span>
                 <input
@@ -724,10 +825,24 @@ export default function WorkspaceSettingsForm({
                   onChange={(event) => setOwnerNewPassword(event.target.value)}
                   placeholder="Minst 4 tegn"
                   className="rounded-xl border px-4 py-3 outline-none transition placeholder:text-[var(--color-muted)]"
-                  style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+                  style={{
+                    borderColor: "var(--color-border)",
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text)",
+                  }}
                 />
               </label>
-              <button type="submit" disabled={updatingWorkspacePassword} className="inline-flex w-fit items-center justify-center rounded-xl border px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60" style={{ borderColor: "rgba(255, 106, 61, 0.35)", backgroundColor: "var(--color-surface)", color: "var(--color-accent)" }}>
+
+              <button
+                type="submit"
+                disabled={updatingWorkspacePassword}
+                className="inline-flex w-fit items-center justify-center rounded-xl border px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                style={{
+                  borderColor: "rgba(255, 106, 61, 0.35)",
+                  backgroundColor: "var(--color-surface)",
+                  color: "var(--color-accent)",
+                }}
+              >
                 {updatingWorkspacePassword ? "Oppdaterer..." : "Oppdater workspace-passord"}
               </button>
             </form>
@@ -735,7 +850,13 @@ export default function WorkspaceSettingsForm({
         </section>
       ) : null}
 
-      <section className="rounded-xl border p-6 shadow-sm" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)" }}>
+      <section
+        className="rounded-xl border p-6 shadow-sm"
+        style={{
+          borderColor: "var(--color-border)",
+          backgroundColor: "var(--color-surface)",
+        }}
+      >
         <div className="flex items-center justify-between">
           <h3 className="text-xl font-semibold" style={{ color: "var(--color-text)" }}>
             Medlemmer
@@ -746,7 +867,14 @@ export default function WorkspaceSettingsForm({
         </div>
 
         {!isOwnerOfActiveWorkspace ? (
-          <div className="mt-4 rounded-xl border px-4 py-3 text-sm" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)", color: "var(--color-muted)" }}>
+          <div
+            className="mt-4 rounded-xl border px-4 py-3 text-sm"
+            style={{
+              borderColor: "var(--color-border)",
+              backgroundColor: "var(--color-surface-soft)",
+              color: "var(--color-muted)",
+            }}
+          >
             Du må være owner for å administrere medlemmer.
           </div>
         ) : loadingMembers ? (
@@ -763,9 +891,19 @@ export default function WorkspaceSettingsForm({
               const isLocked = member.role === "OWNER";
 
               return (
-                <div key={member.membershipId} className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[minmax(0,1fr)_180px_auto]" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface-soft)" }}>
+                <div
+                  key={member.membershipId}
+                  className="grid gap-3 rounded-xl border p-4 lg:grid-cols-[minmax(0,1fr)_180px_auto]"
+                  style={{
+                    borderColor: "var(--color-border)",
+                    backgroundColor: "var(--color-surface-soft)",
+                  }}
+                >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+                    <p
+                      className="truncate text-sm font-semibold"
+                      style={{ color: "var(--color-text)" }}
+                    >
                       {member.user.name || member.user.email}
                     </p>
                     <p className="truncate text-sm" style={{ color: "var(--color-muted)" }}>
@@ -776,9 +914,18 @@ export default function WorkspaceSettingsForm({
                   <select
                     value={member.role}
                     disabled={isLocked || memberRoleLoadingId === member.membershipId}
-                    onChange={(event) => handleRoleChange(member.membershipId, event.target.value as "ADMIN" | "MEMBER")}
+                    onChange={(event) =>
+                      handleRoleChange(
+                        member.membershipId,
+                        event.target.value as "ADMIN" | "MEMBER"
+                      )
+                    }
                     className="w-full rounded-xl border px-4 py-3 text-sm outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
-                    style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+                    style={{
+                      borderColor: "var(--color-border)",
+                      backgroundColor: "var(--color-surface)",
+                      color: "var(--color-text)",
+                    }}
                   >
                     <option value="OWNER">Owner</option>
                     <option value="ADMIN">Admin</option>
@@ -790,7 +937,11 @@ export default function WorkspaceSettingsForm({
                     disabled={isLocked || memberActionId === member.membershipId}
                     onClick={() => handleRemoveMember(member.membershipId)}
                     className="inline-flex items-center justify-center rounded-xl border px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
-                    style={{ borderColor: "rgba(220, 38, 38, 0.35)", backgroundColor: "var(--color-surface)", color: "#f87171" }}
+                    style={{
+                      borderColor: "rgba(220, 38, 38, 0.35)",
+                      backgroundColor: "var(--color-surface)",
+                      color: "#f87171",
+                    }}
                   >
                     {memberActionId === member.membershipId ? "Fjerner..." : "Fjern"}
                   </button>
@@ -802,12 +953,20 @@ export default function WorkspaceSettingsForm({
       </section>
 
       {isOwnerOfActiveWorkspace ? (
-        <section className="rounded-xl border p-6 shadow-sm" style={{ borderColor: "rgba(220, 38, 38, 0.25)", backgroundColor: "rgba(220, 38, 38, 0.08)" }}>
+        <section
+          className="rounded-xl border p-6 shadow-sm"
+          style={{
+            borderColor: "rgba(220, 38, 38, 0.25)",
+            backgroundColor: "rgba(220, 38, 38, 0.08)",
+          }}
+        >
           <h3 className="text-xl font-semibold" style={{ color: "var(--color-danger-text)" }}>
             Avslutt medlemskap
           </h3>
+
           <p className="mt-2 text-sm" style={{ color: "var(--color-danger-text)" }}>
-            Du beholder tilgang til Scopio frem til den betalte perioden er over. Etter dette slettes workspace og tilknyttede data automatisk.
+            Du beholder tilgang til Scopio frem til den betalte perioden er over. Etter
+            dette slettes workspace og tilknyttede data automatisk.
           </p>
 
           <div className="mt-4 grid gap-4">
@@ -815,12 +974,17 @@ export default function WorkspaceSettingsForm({
               <span className="font-medium" style={{ color: "var(--color-danger-text)" }}>
                 Velg workspace/medlemskap som skal avsluttes
               </span>
+
               <select
                 value={deleteOrganizationId}
                 onChange={(event) => setDeleteOrganizationId(event.target.value)}
                 disabled={deletingWorkspace || reactivatingWorkspace || !isOwnerOfActiveWorkspace}
                 className="rounded-xl border px-4 py-3 outline-none transition disabled:cursor-not-allowed disabled:opacity-60"
-                style={{ borderColor: "rgba(220, 38, 38, 0.35)", backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+                style={{
+                  borderColor: "rgba(220, 38, 38, 0.35)",
+                  backgroundColor: "var(--color-surface)",
+                  color: "var(--color-text)",
+                }}
               >
                 <option value="">Velg workspace</option>
                 {ownerOrganizations.map((item) => (
@@ -832,38 +996,75 @@ export default function WorkspaceSettingsForm({
             </label>
 
             {!selectedMembershipIsCanceled ? (
-              <label className="flex flex-col gap-2 text-sm" style={{ color: "var(--color-text)" }}>
+              <label
+                className="flex flex-col gap-2 text-sm"
+                style={{ color: "var(--color-text)" }}
+              >
                 <span className="font-medium" style={{ color: "var(--color-danger-text)" }}>
                   Skriv AVSLUTT for å bekrefte
                 </span>
+
                 <input
                   value={deleteConfirmText}
                   onChange={(event) => setDeleteConfirmText(event.target.value)}
                   placeholder="AVSLUTT"
                   disabled={deletingWorkspace || reactivatingWorkspace || !isOwnerOfActiveWorkspace}
                   className="rounded-xl border px-4 py-3 outline-none transition placeholder:text-[var(--color-muted)] disabled:cursor-not-allowed disabled:opacity-60"
-                  style={{ borderColor: "rgba(220, 38, 38, 0.35)", backgroundColor: "var(--color-surface)", color: "var(--color-text)" }}
+                  style={{
+                    borderColor: "rgba(220, 38, 38, 0.35)",
+                    backgroundColor: "var(--color-surface)",
+                    color: "var(--color-text)",
+                  }}
                 />
               </label>
             ) : null}
 
             <div className="flex flex-wrap gap-3">
               {!selectedMembershipIsCanceled ? (
-                <button type="button" onClick={performDeleteWorkspace} disabled={!canDeleteWorkspace} className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60" style={{ backgroundColor: "#dc2626" }}>
+                <button
+                  type="button"
+                  onClick={performDeleteWorkspace}
+                  disabled={!canDeleteWorkspace}
+                  className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{ backgroundColor: "#dc2626" }}
+                >
                   {deletingWorkspace ? "Avslutter..." : "Avslutt medlemskap"}
                 </button>
               ) : null}
 
               {selectedMembershipIsCanceled ? (
-                <button type="button" onClick={performReactivateWorkspace} disabled={!canReactivateWorkspace} className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60" style={{ border: "1px solid var(--color-success-text)", backgroundColor: "rgba(22, 163, 74, 0.12)", color: "var(--color-success-text)" }}>
+                <button
+                  type="button"
+                  onClick={performReactivateWorkspace}
+                  disabled={!canReactivateWorkspace}
+                  className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60"
+                  style={{
+                    border: "1px solid var(--color-success-text)",
+                    backgroundColor: "rgba(22, 163, 74, 0.12)",
+                    color: "var(--color-success-text)",
+                  }}
+                >
                   {reactivatingWorkspace ? "Reaktiverer..." : "Reaktiver medlemskap"}
                 </button>
               ) : null}
             </div>
 
             {deletableWorkspace ? (
-              <div className="rounded-xl border px-4 py-3 text-sm" style={{ borderColor: selectedMembershipIsCanceled ? "var(--color-success-bg)" : "rgba(220, 38, 38, 0.25)", backgroundColor: "var(--color-surface)", color: selectedMembershipIsCanceled ? "var(--color-success-text)" : "var(--color-danger-text)" }}>
-                {selectedMembershipIsCanceled ? "Medlemskapet er allerede avsluttet for " : "Du er i ferd med å avslutte medlemskapet for "}
+              <div
+                className="rounded-xl border px-4 py-3 text-sm"
+                style={{
+                  borderColor: selectedMembershipIsCanceled
+                    ? "var(--color-success-bg)"
+                    : "rgba(220, 38, 38, 0.25)",
+                  backgroundColor: "var(--color-surface)",
+                  color: selectedMembershipIsCanceled
+                    ? "var(--color-success-text)"
+                    : "var(--color-danger-text)",
+                }}
+              >
+                {selectedMembershipIsCanceled
+                  ? "Medlemskapet er allerede avsluttet for "
+                  : "Du er i ferd med å avslutte medlemskapet for "}
                 <span className="font-semibold">{deletableWorkspace.organization.name}</span>.
               </div>
             ) : null}
@@ -871,14 +1072,60 @@ export default function WorkspaceSettingsForm({
         </section>
       ) : null}
 
+      {manualCancellationRequired ? (
+        <div
+          className="rounded-xl border px-4 py-4 text-sm"
+          style={{
+            borderColor: "rgba(255, 106, 61, 0.28)",
+            backgroundColor: "rgba(255, 106, 61, 0.08)",
+            color: "var(--color-text-soft)",
+          }}
+        >
+          <p className="font-semibold" style={{ color: "var(--color-text)" }}>
+            Vi må avslutte dette manuelt
+          </p>
+
+          <p className="mt-2">
+            Dette medlemskapet kan ikke avsluttes automatisk akkurat nå. Send oss en
+            e-post, så avslutter vi medlemskapet og sletter workspace/data manuelt for
+            deg.
+          </p>
+
+          <button
+            type="button"
+            onClick={() => {
+              window.open(supportGmailHref, "_blank", "noopener,noreferrer");
+            }}
+            className="mt-4 inline-flex items-center justify-center rounded-xl px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+            style={{ backgroundColor: "var(--color-accent)" }}
+          >
+            Kontakt kundeservice
+          </button>
+        </div>
+      ) : null}
+
       {workspaceError ? (
-        <div className="rounded-xl border px-4 py-3 text-sm" style={{ borderColor: "var(--color-danger-bg)", backgroundColor: "var(--color-danger-bg)", color: "var(--color-danger-text)" }}>
+        <div
+          className="rounded-xl border px-4 py-3 text-sm"
+          style={{
+            borderColor: "var(--color-danger-bg)",
+            backgroundColor: "var(--color-danger-bg)",
+            color: "var(--color-danger-text)",
+          }}
+        >
           {workspaceError}
         </div>
       ) : null}
 
       {workspaceSuccess ? (
-        <div className="rounded-xl border px-4 py-3 text-sm" style={{ borderColor: "var(--color-success-bg)", backgroundColor: "var(--color-success-bg)", color: "var(--color-success-text)" }}>
+        <div
+          className="rounded-xl border px-4 py-3 text-sm"
+          style={{
+            borderColor: "var(--color-success-bg)",
+            backgroundColor: "var(--color-success-bg)",
+            color: "var(--color-success-text)",
+          }}
+        >
           {workspaceSuccess}
         </div>
       ) : null}

@@ -699,6 +699,23 @@ router.post(
         },
       });
 
+      const { latestInitialJobByAccountId, latestDailyJobByAccountId } =
+        await getLatestJobsForAccounts(access.organizationId, [result.id]);
+      const latestInitialJob = latestInitialJobByAccountId.get(result.id) ?? null;
+      const latestDailyJob = latestDailyJobByAccountId.get(result.id) ?? null;
+
+      const mappedSocialAccount = {
+        ...result,
+        latestInitialJob: toLatestJobSummary(latestInitialJob),
+        latestDailyJob: toLatestJobSummary(latestDailyJob),
+        retry: {
+          canRetryInitial:
+            result.initialSyncStatus === InitialSyncStatus.FAILED &&
+            latestInitialJob?.status === ScrapeJobStatus.FAILED,
+          canRetryDaily: latestDailyJob?.status === ScrapeJobStatus.FAILED,
+        },
+      };
+
       return res.status(201).json({
         ok: true,
         action: existingAccount ? "reactivated" : "created",
@@ -706,7 +723,7 @@ router.post(
           ? "Social account reaktivert og initial scrape startet"
           : "Social account opprettet og initial scrape startet",
         activeOrganizationId: access.organizationId,
-        socialAccount: result,
+        socialAccount: mappedSocialAccount,
         limits: {
           monthlyAccountAdds: addLimit,
           activeAccountLimit,

@@ -2137,8 +2137,10 @@ router.delete(
       if (!subscription.currentPeriodEnd) {
         return res.status(409).json({
           ok: false,
+          code: "MANUAL_CANCELLATION_REQUIRED",
           error:
-            "Medlemskapet mangler sluttdato for perioden. Kan ikke planlegge automatisk sletting.",
+            "Dette medlemskapet kan foreløpig ikke avsluttes automatisk. Kontakt kundeservice, så hjelper vi deg med å avslutte medlemskapet.",
+          supportEmail: "Dmytro@Maliarchuk.no",
         });
       }
 

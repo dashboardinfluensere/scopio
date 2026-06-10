@@ -635,14 +635,26 @@ async function markJobCompleted(
   }
 
   if (jobType === ScrapeJobType.INITIAL) {
-    await prisma.socialAccount.update({
-      where: { id: socialAccountId },
-      data: {
-        initialSyncStatus: InitialSyncStatus.COMPLETED,
-        needsInitialSync: false,
-        lastSyncedAt: scrapedAt,
-      },
-    });
+    await prisma.$transaction([
+      prisma.socialAccount.update({
+        where: { id: socialAccountId },
+        data: {
+          initialSyncStatus: InitialSyncStatus.COMPLETED,
+          needsInitialSync: false,
+          lastSyncedAt: scrapedAt,
+        },
+      }),
+      prisma.scrapeJob.deleteMany({
+        where: {
+          id: {
+            not: jobId,
+          },
+          socialAccountId,
+          type: ScrapeJobType.INITIAL,
+          status: ScrapeJobStatus.PENDING,
+        },
+      }),
+    ]);
     return;
   }
 
@@ -804,6 +816,8 @@ async function canRunJob(job: {
     },
     select: {
       lastSyncedAt: true,
+      needsInitialSync: true,
+      initialSyncStatus: true,
     },
   });
 
@@ -814,9 +828,15 @@ async function canRunJob(job: {
     };
   }
 
+  const shouldBypassCooldownForUnfinishedInitialSync =
+    job.type === ScrapeJobType.INITIAL &&
+    (socialAccount.needsInitialSync ||
+      socialAccount.initialSyncStatus !== InitialSyncStatus.COMPLETED);
+
   const cooldownMs = getCooldownMsForJobType(job.type);
 
   if (
+    !shouldBypassCooldownForUnfinishedInitialSync &&
     socialAccount.lastSyncedAt &&
     Date.now() - socialAccount.lastSyncedAt.getTime() < cooldownMs
   ) {
