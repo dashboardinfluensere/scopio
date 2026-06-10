@@ -1,5 +1,6 @@
 import { MemberRole } from "@prisma/client";
 import { prisma } from "../prisma";
+import { resolveActiveOrganizationMembership } from "./activeOrganizationResolver";
 
 type OrganizationAccess = {
   userId: string;
@@ -16,7 +17,18 @@ export async function getActiveOrganizationAccess(
       authProviderId: clerkUserId,
     },
     include: {
-      memberships: true,
+      memberships: {
+        include: {
+          organization: {
+            include: {
+              subscription: true,
+            },
+          },
+        },
+        orderBy: {
+          createdAt: "asc",
+        },
+      },
     },
   });
 
@@ -24,21 +36,18 @@ export async function getActiveOrganizationAccess(
     throw new Error("Bruker ikke funnet");
   }
 
-  if (!user.activeOrganizationId) {
+  const resolved = await resolveActiveOrganizationMembership({
+    user,
+    memberships: user.memberships,
+  });
+
+  if (!resolved.activeMembership || !resolved.activeOrganizationId) {
     throw new Error("Ingen aktiv workspace valgt");
-  }
-
-  const membership = user.memberships.find(
-    (item) => item.organizationId === user.activeOrganizationId
-  );
-
-  if (!membership) {
-    throw new Error("Du har ikke tilgang til denne workspace-en");
   }
 
   return {
     userId: user.id,
-    organizationId: user.activeOrganizationId,
-    role: membership.role,
+    organizationId: resolved.activeOrganizationId,
+    role: resolved.activeMembership.role,
   };
 }

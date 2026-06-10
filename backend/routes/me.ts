@@ -12,6 +12,10 @@ import {
   type AuthenticatedRequest,
 } from "../middleware/requireAuth";
 import { meLimiter } from "../middleware/rateLimiters";
+import {
+  isOrganizationAvailable,
+  resolveActiveOrganizationMembership,
+} from "../services/activeOrganizationResolver";
 
 const router = Router();
 
@@ -93,20 +97,6 @@ router.get("/", requireAuth, meLimiter, async (req: AuthenticatedRequest, res) =
             createdAt: "asc",
           },
         },
-        activeOrganization: {
-          include: {
-            subscription: true,
-            socialAccounts: {
-              where: {
-                isActive: true,
-              },
-              select: {
-                id: true,
-                initialSyncStatus: true,
-              },
-            },
-          },
-        },
       },
     });
 
@@ -126,7 +116,15 @@ router.get("/", requireAuth, meLimiter, async (req: AuthenticatedRequest, res) =
       },
     });
 
-    const organizations = user.memberships.map((membership) => ({
+    const resolved = await resolveActiveOrganizationMembership({
+      user,
+      memberships: user.memberships,
+    });
+
+    const activeOrganizationId = resolved.activeOrganizationId;
+    const activeOrganizationRaw = resolved.activeMembership?.organization ?? null;
+
+    const organizations = resolved.availableMemberships.map((membership) => ({
       membershipId: membership.id,
       role: membership.role,
       organization: {
@@ -150,50 +148,23 @@ router.get("/", requireAuth, meLimiter, async (req: AuthenticatedRequest, res) =
       },
     }));
 
-    let activeOrganizationId = user.activeOrganizationId;
-
-    if (!activeOrganizationId && organizations.length > 0) {
-      activeOrganizationId = organizations[0].organization.id;
-
-      await prisma.user.update({
-        where: {
-          id: user.id,
-        },
-        data: {
-          activeOrganizationId,
-        },
-      });
-    }
-
-    const resolvedActiveOrganization =
-      user.activeOrganization && user.activeOrganizationId
-        ? user.activeOrganization
-        : activeOrganizationId
-          ? user.memberships.find(
-              (membership) => membership.organization.id === activeOrganizationId
-            )?.organization ?? null
-          : null;
-
-    const activeOrganization = resolvedActiveOrganization
+    const activeOrganization = activeOrganizationRaw
       ? {
-          id: resolvedActiveOrganization.id,
-          name: resolvedActiveOrganization.name,
-          slug: resolvedActiveOrganization.slug,
-          createdAt: resolvedActiveOrganization.createdAt,
-          updatedAt: resolvedActiveOrganization.updatedAt,
-          initialScrapeStartedAt:
-            resolvedActiveOrganization.initialScrapeStartedAt,
-          onboardingCompletedAt:
-            resolvedActiveOrganization.onboardingCompletedAt,
-          socialAccountsCount: resolvedActiveOrganization.socialAccounts.length,
-          socialAccounts: resolvedActiveOrganization.socialAccounts,
-          subscription: resolvedActiveOrganization.subscription
+          id: activeOrganizationRaw.id,
+          name: activeOrganizationRaw.name,
+          slug: activeOrganizationRaw.slug,
+          createdAt: activeOrganizationRaw.createdAt,
+          updatedAt: activeOrganizationRaw.updatedAt,
+          initialScrapeStartedAt: activeOrganizationRaw.initialScrapeStartedAt,
+          onboardingCompletedAt: activeOrganizationRaw.onboardingCompletedAt,
+          socialAccountsCount: activeOrganizationRaw.socialAccounts.length,
+          socialAccounts: activeOrganizationRaw.socialAccounts,
+          subscription: activeOrganizationRaw.subscription
             ? {
-                id: resolvedActiveOrganization.subscription.id,
-                plan: resolvedActiveOrganization.subscription.plan,
-                status: resolvedActiveOrganization.subscription.status,
-                currentPeriodEnd:
-                  resolvedActiveOrganization.subscription.currentPeriodEnd,
+                id: activeOrganizationRaw.subscription.id,
+                plan: activeOrganizationRaw.subscription.plan,
+                status: activeOrganizationRaw.subscription.status,
+                currentPeriodEnd: activeOrganizationRaw.subscription.currentPeriodEnd,
               }
             : null,
         }
@@ -334,14 +305,6 @@ router.get("/", requireAuth, meLimiter, async (req: AuthenticatedRequest, res) =
       "GET /me error STACK:",
       error instanceof Error ? error.stack : "Ingen stack"
     );
-    console.error(
-      "GET /me error JSON:",
-      JSON.stringify(
-        error,
-        Object.getOwnPropertyNames(error instanceof Object ? error : {}),
-        2
-      )
-    );
 
     return res.status(500).json({
       ok: false,
@@ -447,8 +410,12 @@ router.post(
         },
         include: {
           memberships: {
-            select: {
-              organizationId: true,
+            include: {
+              organization: {
+                include: {
+                  subscription: true,
+                },
+              },
             },
           },
         },
@@ -461,14 +428,21 @@ router.post(
         });
       }
 
-      const hasAccess = user.memberships.some(
-        (membership) => membership.organizationId === organizationId
+      const membership = user.memberships.find(
+        (item) => item.organizationId === organizationId
       );
 
-      if (!hasAccess) {
+      if (!membership) {
         return res.status(403).json({
           ok: false,
-          error: "Brukeren har ikke tilgang til denne organization",
+          error: "Brukeren har ikke tilgang til denne workspacen",
+        });
+      }
+
+      if (!isOrganizationAvailable(membership.organization)) {
+        return res.status(410).json({
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
         });
       }
 
@@ -483,7 +457,7 @@ router.post(
 
       return res.status(200).json({
         ok: true,
-        message: "Aktiv organization oppdatert",
+        message: "Aktiv workspace oppdatert",
         activeOrganizationId: updatedUser.activeOrganizationId,
       });
     } catch (error) {
@@ -491,7 +465,7 @@ router.post(
 
       return res.status(500).json({
         ok: false,
-        error: "Kunne ikke oppdatere aktiv organization",
+        error: "Kunne ikke oppdatere aktiv workspace",
       });
     }
   }

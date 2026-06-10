@@ -21,6 +21,10 @@ import {
 } from "../middleware/rateLimiters";
 import { hasRole } from "../services/hasRole";
 import { logAdminEvent } from "../services/adminLogs";
+import {
+  isOrganizationAvailable,
+  resolveActiveOrganizationMembership,
+} from "../services/activeOrganizationResolver";
 
 const router = Router();
 
@@ -274,6 +278,13 @@ async function getMembership(userId: string, organizationId: string) {
       userId,
       organizationId,
     },
+    include: {
+      organization: {
+        include: {
+          subscription: true,
+        },
+      },
+    },
   });
 }
 
@@ -346,6 +357,20 @@ async function requireOrganizationMembership(
     };
   }
 
+  if (!isOrganizationAvailable(membership.organization)) {
+    return {
+      error: {
+        status: 410,
+        body: {
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
+        },
+      },
+      user: authResult.user,
+      membership: null,
+    };
+  }
+
   return {
     error: null,
     user: authResult.user,
@@ -398,7 +423,12 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       });
     }
 
-    const organizations = user.memberships.map((membership) => {
+    const resolved = await resolveActiveOrganizationMembership({
+      user,
+      memberships: user.memberships,
+    });
+
+    const organizations = resolved.availableMemberships.map((membership) => {
       const subscription = membership.organization.subscription;
       const memberLimit = getMemberLimitFromPlan(subscription?.plan);
 
@@ -424,13 +454,13 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
               }
             : null,
         },
-        isActive: membership.organizationId === user.activeOrganizationId,
+        isActive: membership.organizationId === resolved.activeOrganizationId,
       };
     });
 
     return res.status(200).json({
       ok: true,
-      activeOrganizationId: user.activeOrganizationId,
+      activeOrganizationId: resolved.activeOrganizationId,
       organizations,
     });
   } catch (error) {
@@ -818,6 +848,13 @@ router.post(
         });
       }
 
+      if (!isOrganizationAvailable(membership.organization)) {
+        return res.status(410).json({
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
+        });
+      }
+
       await prisma.user.update({
         where: {
           id: user.id,
@@ -917,6 +954,13 @@ router.post(
         });
       }
 
+      if (!isOrganizationAvailable(user.activeOrganization)) {
+        return res.status(410).json({
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
+        });
+      }
+
       const membership = await getMembership(user.id, user.activeOrganizationId);
 
       if (!membership || !hasRole(membership.role, [MemberRole.OWNER])) {
@@ -1004,7 +1048,6 @@ router.post(
         currentSubscription.status === SubscriptionStatus.CANCELED;
 
       const hasActiveAccounts = activeAccountsCount > 0;
-
       const requiresHistoricalResync = wasTrialing && hasActiveAccounts;
 
       const previousPlan = currentSubscription.plan;
@@ -1122,11 +1165,9 @@ router.patch(
       const { organizationId } = parsedParams.data;
       const { name } = parsedBody.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -1223,11 +1264,9 @@ router.patch(
       const { organizationId } = parsedParams.data;
       const { password } = parsedBody.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -1313,6 +1352,13 @@ router.post(
         });
       }
 
+      if (!isOrganizationAvailable(organization)) {
+        return res.status(410).json({
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
+        });
+      }
+
       if (!organization.joinPasswordHash) {
         return res.status(403).json({
           ok: false,
@@ -1360,6 +1406,10 @@ router.post(
 
         if (!freshOrganization) {
           return { code: "NOT_FOUND" as const };
+        }
+
+        if (!isOrganizationAvailable(freshOrganization)) {
+          return { code: "NOT_AVAILABLE" as const };
         }
 
         const memberLimit = getMemberLimitFromPlan(
@@ -1416,6 +1466,13 @@ router.post(
         });
       }
 
+      if (result.code === "NOT_AVAILABLE") {
+        return res.status(410).json({
+          ok: false,
+          error: "Dette workspacet er ikke lenger tilgjengelig.",
+        });
+      }
+
       if (result.code === "MEMBER_LIMIT_REACHED") {
         return res.status(409).json({
           ok: false,
@@ -1456,7 +1513,8 @@ router.post(
                 status: result.organization.subscription.status,
                 currentPeriodStart:
                   result.organization.subscription.currentPeriodStart,
-                currentPeriodEnd: result.organization.subscription.currentPeriodEnd,
+                currentPeriodEnd:
+                  result.organization.subscription.currentPeriodEnd,
                 cancelAtPeriodEnd:
                   result.organization.subscription.cancelAtPeriodEnd,
               }
@@ -1490,11 +1548,10 @@ router.get(
 
       const { organizationId } = parsedParams.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+        MemberRole.ADMIN,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -1585,11 +1642,9 @@ router.patch(
       const { organizationId, membershipId } = parsedParams.data;
       const { role } = parsedBody.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -1705,11 +1760,9 @@ router.delete(
 
       const { organizationId, membershipId } = parsedParams.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -1758,13 +1811,23 @@ router.delete(
             id: targetMembership.userId,
           },
           include: {
-            memberships: true,
+            memberships: {
+              include: {
+                organization: {
+                  include: {
+                    subscription: true,
+                  },
+                },
+              },
+            },
           },
         });
 
         if (targetUser?.activeOrganizationId === organizationId) {
-          const fallbackMembership = targetUser.memberships.find(
-            (item) => item.organizationId !== organizationId
+          const availableFallback = targetUser.memberships.find(
+            (item) =>
+              item.organizationId !== organizationId &&
+              isOrganizationAvailable(item.organization)
           );
 
           await tx.user.update({
@@ -1772,7 +1835,7 @@ router.delete(
               id: targetMembership.userId,
             },
             data: {
-              activeOrganizationId: fallbackMembership?.organizationId ?? null,
+              activeOrganizationId: availableFallback?.organizationId ?? null,
             },
           });
         }
@@ -1832,14 +1895,26 @@ router.patch(
 
       const { organizationId } = parsedParams.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireAuthenticatedUser(req);
 
-      if (access.error || !access.user || !access.membership) {
+      if (access.error || !access.user) {
         return res.status(access.error!.status).json(access.error!.body);
+      }
+
+      const membership = await getMembership(access.user.id, organizationId);
+
+      if (!membership) {
+        return res.status(403).json({
+          ok: false,
+          error: "Brukeren er ikke medlem av dette workspace-et",
+        });
+      }
+
+      if (!hasRole(membership.role, [MemberRole.OWNER])) {
+        return res.status(403).json({
+          ok: false,
+          error: "Ingen tilgang",
+        });
       }
 
       const organization = await prisma.organization.findUnique({
@@ -1908,6 +1983,15 @@ router.patch(
           },
           data: {
             cancelAtPeriodEnd: false,
+          },
+        });
+
+        await tx.user.update({
+          where: {
+            id: access.user!.id,
+          },
+          data: {
+            activeOrganizationId: organizationId,
           },
         });
 
@@ -1987,11 +2071,9 @@ router.delete(
 
       const { organizationId } = parsedParams.data;
 
-      const access = await requireOrganizationRole(
-        req,
-        organizationId,
-        [MemberRole.OWNER]
-      );
+      const access = await requireOrganizationRole(req, organizationId, [
+        MemberRole.OWNER,
+      ]);
 
       if (access.error || !access.user || !access.membership) {
         return res.status(access.error!.status).json(access.error!.body);
@@ -2144,6 +2226,5 @@ router.delete(
     }
   }
 );
-
 
 export default router;
