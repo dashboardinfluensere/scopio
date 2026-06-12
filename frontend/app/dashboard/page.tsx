@@ -10,6 +10,7 @@ import DashboardInteractive, {
   DashboardTopPosts,
 } from "../../components/DashboardInteractive";
 import PublishingHeatmap from "../../components/PublishingHeatmap";
+import InsightsCarousel from "../../components/InsightsCarousel";
 import PublishedContentTable from "../../components/PublishedContentTable";
 import UserMenuButton from "../../components/UserMenuButton";
 import AppThemeShell from "../../components/AppThemeShell";
@@ -235,6 +236,8 @@ type InsightItem = {
   title: string;
   value: string;
   description: string;
+  href?: string;
+  actionLabel?: string;
 };
 
 type InsightsResponse = {
@@ -679,42 +682,6 @@ function SegmentButton({
   );
 }
 
-function InsightCard({
-  title,
-  value,
-  description,
-}: {
-  title: string;
-  value: string;
-  description: string;
-}) {
-  return (
-    <div
-      className="rounded-xl border px-4 py-4 md:px-5 md:py-5"
-      style={{
-        borderColor: "var(--color-border)",
-        backgroundColor: "var(--color-surface-soft)",
-      }}
-    >
-      <p className="text-sm font-medium" style={{ color: "var(--color-muted)" }}>
-        {title}
-      </p>
-      <p
-        className="mt-2 text-xl font-semibold tracking-tight md:mt-3 md:text-2xl"
-        style={{ color: "var(--color-text)" }}
-      >
-        {value}
-      </p>
-      <p
-        className="mt-2 text-sm leading-6"
-        style={{ color: "var(--color-muted)" }}
-      >
-        {description}
-      </p>
-    </div>
-  );
-}
-
 export default async function HomePage(props: { searchParams: SearchParams }) {
   const { userId } = await auth();
 
@@ -1121,16 +1088,7 @@ export default async function HomePage(props: { searchParams: SearchParams }) {
                       </span>
                     </summary>
 
-                    <div className="mt-4 grid grid-cols-1 gap-4 xl:grid-cols-3">
-                      {insightsResponse.insights.map((insight) => (
-                        <InsightCard
-                          key={insight.id}
-                          title={insight.title}
-                          value={insight.value}
-                          description={insight.description}
-                        />
-                      ))}
-                    </div>
+                    <InsightsCarousel insights={insightsResponse.insights} />
                   </details>
                 </section>
               ) : null}

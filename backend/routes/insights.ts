@@ -16,14 +16,32 @@ type InsightItem = {
   title: string;
   value: string;
   description: string;
+  href?: string;
+  actionLabel?: string;
 };
+
+type DurationBucketKey =
+  | "0_7"
+  | "8_15"
+  | "16_30"
+  | "31_45"
+  | "46_60"
+  | "60_plus";
 
 type PostMetric = {
   id: string;
   platform: Platform;
   captionBucket: "short" | "long";
   views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  saves: number;
   engagementRate: number;
+  responsePer100Views: number;
+  durationSeconds: number | null;
+  durationBucket: DurationBucketKey | null;
+  url: string | null;
 };
 
 function getAuthenticatedClerkUserId(req: AuthenticatedRequest): string | null {
@@ -138,9 +156,43 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function formatDecimal(value: number, decimals = 1) {
+  return value.toFixed(decimals).replace(".", ",");
+}
+
+function getPeriodLabel(period: Period) {
+  if (period === "7") return "siste 7 dagene";
+  if (period === "30") return "siste 30 dagene";
+  if (period === "90") return "siste 90 dagene";
+  return "valgt periode";
+}
+
 function getCaptionBucket(caption: string | null | undefined): "short" | "long" {
   const length = (caption ?? "").trim().length;
   return length <= 80 ? "short" : "long";
+}
+
+function getDurationBucket(seconds: number | null | undefined): DurationBucketKey | null {
+  if (seconds == null || seconds <= 0) return null;
+  if (seconds <= 7) return "0_7";
+  if (seconds <= 15) return "8_15";
+  if (seconds <= 30) return "16_30";
+  if (seconds <= 45) return "31_45";
+  if (seconds <= 60) return "46_60";
+  return "60_plus";
+}
+
+function getDurationBucketLabel(bucket: DurationBucketKey) {
+  const labels: Record<DurationBucketKey, string> = {
+    "0_7": "0–7 sek",
+    "8_15": "8–15 sek",
+    "16_30": "16–30 sek",
+    "31_45": "31–45 sek",
+    "46_60": "46–60 sek",
+    "60_plus": "60+ sek",
+  };
+
+  return labels[bucket];
 }
 
 function getEngagementRate(snapshot: {
@@ -192,6 +244,7 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
     }
 
     const period: Period = isValidPeriod(periodRaw) ? periodRaw : "30";
+    const periodLabel = getPeriodLabel(period);
     const access = await getActiveOrganizationAccess(clerkUserId);
     const range = getDateRange(period, from, to);
 
@@ -234,6 +287,8 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       select: {
         id: true,
         caption: true,
+        url: true,
+        durationSeconds: true,
         socialAccount: {
           select: {
             platform: true,
@@ -266,12 +321,26 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
         return acc;
       }
 
+      const views = Number(latestSnapshot.views ?? 0);
+      const likes = Number(latestSnapshot.likes ?? 0);
+      const comments = Number(latestSnapshot.comments ?? 0);
+      const shares = Number(latestSnapshot.shares ?? 0);
+      const saves = Number(latestSnapshot.saves ?? 0);
+
       acc.push({
         id: post.id,
         platform: post.socialAccount.platform,
         captionBucket: getCaptionBucket(post.caption),
-        views: Number(latestSnapshot.views ?? 0),
+        views,
+        likes,
+        comments,
+        shares,
+        saves,
         engagementRate: getEngagementRate(latestSnapshot),
+        responsePer100Views: views > 0 ? ((likes + comments) / views) * 100 : 0,
+        durationSeconds: post.durationSeconds,
+        durationBucket: getDurationBucket(post.durationSeconds),
+        url: post.url,
       });
 
       return acc;
@@ -286,20 +355,104 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
 
     const insights: InsightItem[] = [];
     const totalViews = postMetrics.reduce((sum, post) => sum + post.views, 0);
+    const totalLikes = postMetrics.reduce((sum, post) => sum + post.likes, 0);
+    const totalComments = postMetrics.reduce((sum, post) => sum + post.comments, 0);
     const sortedByViews = [...postMetrics].sort((a, b) => b.views - a.views);
 
-    const topThreeViews = sortedByViews
-      .slice(0, 3)
-      .reduce((sum, post) => sum + post.views, 0);
+    const averageLikesPer100Views = totalViews > 0 ? (totalLikes / totalViews) * 100 : 0;
+    const averageCommentsPer100Views =
+      totalViews > 0 ? (totalComments / totalViews) * 100 : 0;
 
-    const topThreeShare = totalViews > 0 ? (topThreeViews / totalViews) * 100 : 0;
+    const averageAudienceEngagementPer100Views =
+      averageLikesPer100Views + averageCommentsPer100Views;
 
     insights.push({
-      id: "top_content_share",
-      title: "Toppinnhold",
-      value: `${topThreeShare.toFixed(1).replace(".", ",")} %`,
-      description: "De 3 beste innleggene sto for denne andelen av totale views.",
+      id: "audience_response",
+      title: "Publikumsrespons",
+      value: `${formatDecimal(averageAudienceEngagementPer100Views)} % engasjement`,
+      description: `Gjennomsnittlig ${periodLabel} fikk du ${formatDecimal(
+        averageLikesPer100Views
+      )} likes og ${formatDecimal(
+        averageCommentsPer100Views
+      )} kommentarer per 100 views.`,
     });
+
+    const durationStats = postMetrics.reduce(
+      (acc, post) => {
+        if (!post.durationBucket) {
+          return acc;
+        }
+
+        const current = acc.get(post.durationBucket) ?? {
+          count: 0,
+          views: [] as number[],
+        };
+
+        current.count += 1;
+        current.views.push(post.views);
+
+        acc.set(post.durationBucket, current);
+
+        return acc;
+      },
+      new Map<DurationBucketKey, { count: number; views: number[] }>()
+    );
+
+    const durationCandidates = [...durationStats.entries()]
+      .map(([bucket, stats]) => ({
+        bucket,
+        count: stats.count,
+        averageViews: average(stats.views),
+      }))
+      .filter((item) => item.count >= 2)
+      .sort((a, b) => b.averageViews - a.averageViews);
+
+    if (durationCandidates.length > 0) {
+      const winner = durationCandidates[0];
+
+      insights.push({
+        id: "best_video_length",
+        title: "Beste lengde",
+        value: getDurationBucketLabel(winner.bucket),
+        description: `Videoer på ${getDurationBucketLabel(
+          winner.bucket
+        )} fikk høyest snittvisninger ${periodLabel}, basert på ${winner.count} videoer.`,
+      });
+    }
+
+    const topViewIds = new Set(sortedByViews.slice(0, 3).map((post) => post.id));
+    const averageResponsePer100Views = average(
+      postMetrics
+        .filter((post) => post.views > 0)
+        .map((post) => post.responsePer100Views)
+    );
+
+    const analysisCandidate = postMetrics
+      .filter((post) => post.url)
+      .filter((post) => !topViewIds.has(post.id))
+      .filter((post) => post.views >= 100)
+      .map((post) => ({
+        ...post,
+        responseMultiplier:
+          averageResponsePer100Views > 0
+            ? post.responsePer100Views / averageResponsePer100Views
+            : 0,
+      }))
+      .filter((post) => post.responseMultiplier >= 1.5)
+      .sort((a, b) => b.responseMultiplier - a.responseMultiplier)[0];
+
+    if (analysisCandidate?.url) {
+      insights.push({
+        id: "analyze_this_post",
+        title: "Analyser denne",
+        value: `${formatDecimal(analysisCandidate.responseMultiplier)}x høyere respons`,
+        description: `Denne videoen fikk ${formatDecimal(
+          analysisCandidate.responseMultiplier
+        )}x flere likes og kommentarer per 100 views enn snittet ${periodLabel}.`,
+        href: analysisCandidate.url,
+        actionLabel: "Åpne video",
+      });
+    }
 
     const captionStats = postMetrics.reduce(
       (acc, post) => {
@@ -320,7 +473,6 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       const shortIsBetter = shortAvgEngagement > longAvgEngagement;
       const best = shortIsBetter ? shortAvgEngagement : longAvgEngagement;
       const other = shortIsBetter ? longAvgEngagement : shortAvgEngagement;
-
       const diffPercent = other > 0 ? ((best - other) / other) * 100 : 0;
 
       insights.push({
@@ -329,23 +481,20 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
         value: shortIsBetter ? "Korte captions" : "Lange captions",
         description: `${
           shortIsBetter ? "Korte" : "Lange"
-        } captions ga ${diffPercent.toFixed(1).replace(".", ",")} % høyere engasjement.`,
+        } captions ga ${formatDecimal(diffPercent)} % høyere engasjement.`,
       });
     }
 
     const topTwentyPercentCount = Math.max(1, Math.ceil(postMetrics.length * 0.2));
-
     const topTwentyPercentViews = sortedByViews
       .slice(0, topTwentyPercentCount)
       .reduce((sum, post) => sum + post.views, 0);
-
-    const concentrationShare =
-      totalViews > 0 ? (topTwentyPercentViews / totalViews) * 100 : 0;
+    const concentrationShare = totalViews > 0 ? (topTwentyPercentViews / totalViews) * 100 : 0;
 
     insights.push({
       id: "view_concentration",
       title: "Konsentrasjon",
-      value: `${concentrationShare.toFixed(1).replace(".", ",")} %`,
+      value: `${formatDecimal(concentrationShare)} %`,
       description: `De beste ${topTwentyPercentCount} innleggene sto for denne andelen av totale views.`,
     });
 
@@ -358,7 +507,6 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       const [winnerPlatform, winnerViews] = [...platformTotals.entries()].sort(
         (a, b) => b[1] - a[1]
       )[0];
-
       const winnerShare = totalViews > 0 ? (winnerViews / totalViews) * 100 : 0;
       const platformLabel = getPlatformLabel(winnerPlatform);
 
@@ -366,15 +514,15 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
         id: "platform_share",
         title: "Plattformfordeling",
         value: platformLabel,
-        description: `${platformLabel} sto for ${winnerShare
-          .toFixed(1)
-          .replace(".", ",")} % av totale views i valgt periode.`,
+        description: `${platformLabel} sto for ${formatDecimal(
+          winnerShare
+        )} % av totale views i valgt periode.`,
       });
     }
 
     return res.json({
       ok: true,
-      insights: insights.slice(0, 3),
+      insights: insights.slice(0, 5),
     });
   } catch (error) {
     console.error("Insights error:", error);
