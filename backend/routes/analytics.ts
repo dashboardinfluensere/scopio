@@ -616,19 +616,20 @@ router.get(
         requestedAccountIds
       );
 
-      const currentData = await getSummaryForRange(
-        access.organizationId,
-        selectedAccountIds,
-        selectedAccounts,
-        range
-      );
-
-      const previousData = await getSummaryForRange(
-        access.organizationId,
-        selectedAccountIds,
-        selectedAccounts,
-        previousRange
-      );
+      const [currentData, previousData] = await Promise.all([
+        getSummaryForRange(
+          access.organizationId,
+          selectedAccountIds,
+          selectedAccounts,
+          range
+        ),
+        getSummaryForRange(
+          access.organizationId,
+          selectedAccountIds,
+          selectedAccounts,
+          previousRange
+        ),
+      ]);
 
       return res.json({
         ok: true,

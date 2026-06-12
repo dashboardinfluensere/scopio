@@ -11,6 +11,21 @@ const router = Router();
 
 type Period = "7" | "30" | "90" | "custom";
 
+type InsightItem = {
+  id: string;
+  title: string;
+  value: string;
+  description: string;
+};
+
+type PostMetric = {
+  id: string;
+  platform: Platform;
+  captionBucket: "short" | "long";
+  views: number;
+  engagementRate: number;
+};
+
 function getAuthenticatedClerkUserId(req: AuthenticatedRequest): string | null {
   return req.auth?.clerkUserId ?? req.auth?.userId ?? null;
 }
@@ -123,28 +138,19 @@ function average(values: number[]) {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
-function getLatestViews(post: {
-  snapshots: Array<{ views: number | null }>;
-}) {
-  return Number(post.snapshots[0]?.views ?? 0);
+function getCaptionBucket(caption: string | null | undefined): "short" | "long" {
+  const length = (caption ?? "").trim().length;
+  return length <= 80 ? "short" : "long";
 }
 
-function getLatestEngagementRate(post: {
-  snapshots: Array<{
-    engagementRate: number | null;
-    views: number | null;
-    likes: number | null;
-    comments: number | null;
-    shares: number | null;
-    saves: number | null;
-  }>;
+function getEngagementRate(snapshot: {
+  engagementRate: number | null;
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  shares: number | null;
+  saves: number | null;
 }) {
-  const snapshot = post.snapshots[0];
-
-  if (!snapshot) {
-    return 0;
-  }
-
   if (snapshot.engagementRate != null) {
     return Number(snapshot.engagementRate);
   }
@@ -164,9 +170,10 @@ function getLatestEngagementRate(post: {
   return Number(((engagements / views) * 100).toFixed(2));
 }
 
-function getCaptionBucket(caption: string | null | undefined) {
-  const length = (caption ?? "").trim().length;
-  return length <= 80 ? "short" : "long";
+function getPlatformLabel(platform: Platform) {
+  if (platform === Platform.TIKTOK) return "TikTok";
+  if (platform === Platform.INSTAGRAM) return "Instagram";
+  return platform;
 }
 
 router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
@@ -224,7 +231,9 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
           lte: range.end,
         },
       },
-      include: {
+      select: {
+        id: true,
+        caption: true,
         socialAccount: {
           select: {
             platform: true,
@@ -250,33 +259,38 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       },
     });
 
-    const validPosts = posts.filter((post) => post.snapshots.length > 0);
+    const postMetrics = posts.reduce<PostMetric[]>((acc, post) => {
+      const latestSnapshot = post.snapshots[0];
 
-    if (validPosts.length === 0) {
+      if (!latestSnapshot) {
+        return acc;
+      }
+
+      acc.push({
+        id: post.id,
+        platform: post.socialAccount.platform,
+        captionBucket: getCaptionBucket(post.caption),
+        views: Number(latestSnapshot.views ?? 0),
+        engagementRate: getEngagementRate(latestSnapshot),
+      });
+
+      return acc;
+    }, []);
+
+    if (postMetrics.length === 0) {
       return res.json({
         ok: true,
         insights: [],
       });
     }
 
-    const insights: Array<{
-      id: string;
-      title: string;
-      value: string;
-      description: string;
-    }> = [];
+    const insights: InsightItem[] = [];
+    const totalViews = postMetrics.reduce((sum, post) => sum + post.views, 0);
+    const sortedByViews = [...postMetrics].sort((a, b) => b.views - a.views);
 
-    const totalViews = validPosts.reduce((sum, post) => {
-      return sum + getLatestViews(post);
-    }, 0);
-
-    const sortedByViews = [...validPosts].sort((a, b) => {
-      return getLatestViews(b) - getLatestViews(a);
-    });
-
-    const topThreeViews = sortedByViews.slice(0, 3).reduce((sum, post) => {
-      return sum + getLatestViews(post);
-    }, 0);
+    const topThreeViews = sortedByViews
+      .slice(0, 3)
+      .reduce((sum, post) => sum + post.views, 0);
 
     const topThreeShare = totalViews > 0 ? (topThreeViews / totalViews) * 100 : 0;
 
@@ -287,20 +301,21 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       description: "De 3 beste innleggene sto for denne andelen av totale views.",
     });
 
-    const shortCaptionPosts = validPosts.filter(
-      (post) => getCaptionBucket(post.caption) === "short"
-    );
-    const longCaptionPosts = validPosts.filter(
-      (post) => getCaptionBucket(post.caption) === "long"
+    const captionStats = postMetrics.reduce(
+      (acc, post) => {
+        acc[post.captionBucket].count += 1;
+        acc[post.captionBucket].engagementRates.push(post.engagementRate);
+        return acc;
+      },
+      {
+        short: { count: 0, engagementRates: [] as number[] },
+        long: { count: 0, engagementRates: [] as number[] },
+      }
     );
 
-    if (shortCaptionPosts.length >= 3 && longCaptionPosts.length >= 3) {
-      const shortAvgEngagement = average(
-        shortCaptionPosts.map((post) => getLatestEngagementRate(post))
-      );
-      const longAvgEngagement = average(
-        longCaptionPosts.map((post) => getLatestEngagementRate(post))
-      );
+    if (captionStats.short.count >= 3 && captionStats.long.count >= 3) {
+      const shortAvgEngagement = average(captionStats.short.engagementRates);
+      const longAvgEngagement = average(captionStats.long.engagementRates);
 
       const shortIsBetter = shortAvgEngagement > longAvgEngagement;
       const best = shortIsBetter ? shortAvgEngagement : longAvgEngagement;
@@ -318,11 +333,11 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       });
     }
 
-    const topTwentyPercentCount = Math.max(1, Math.ceil(validPosts.length * 0.2));
+    const topTwentyPercentCount = Math.max(1, Math.ceil(postMetrics.length * 0.2));
 
     const topTwentyPercentViews = sortedByViews
       .slice(0, topTwentyPercentCount)
-      .reduce((sum, post) => sum + getLatestViews(post), 0);
+      .reduce((sum, post) => sum + post.views, 0);
 
     const concentrationShare =
       totalViews > 0 ? (topTwentyPercentViews / totalViews) * 100 : 0;
@@ -334,39 +349,26 @@ router.get("/", requireAuth, async (req: AuthenticatedRequest, res) => {
       description: `De beste ${topTwentyPercentCount} innleggene sto for denne andelen av totale views.`,
     });
 
-    const uniquePlatforms = Array.from(
-      new Set(validPosts.map((post) => post.socialAccount.platform))
-    ) as Platform[];
+    const platformTotals = postMetrics.reduce((acc, post) => {
+      acc.set(post.platform, (acc.get(post.platform) ?? 0) + post.views);
+      return acc;
+    }, new Map<Platform, number>());
 
-    if (uniquePlatforms.length > 1) {
-      const platformTotals = uniquePlatforms.map((platform) => {
-        const platformPosts = validPosts.filter(
-          (post) => post.socialAccount.platform === platform
-        );
+    if (platformTotals.size > 1) {
+      const [winnerPlatform, winnerViews] = [...platformTotals.entries()].sort(
+        (a, b) => b[1] - a[1]
+      )[0];
 
-        const views = platformPosts.reduce((sum, post) => {
-          return sum + getLatestViews(post);
-        }, 0);
-
-        return {
-          platform,
-          views,
-        };
-      });
-
-      platformTotals.sort((a, b) => b.views - a.views);
-
-      const winner = platformTotals[0];
-      const winnerShare =
-        totalViews > 0 ? (winner.views / totalViews) * 100 : 0;
+      const winnerShare = totalViews > 0 ? (winnerViews / totalViews) * 100 : 0;
+      const platformLabel = getPlatformLabel(winnerPlatform);
 
       insights.push({
         id: "platform_share",
         title: "Plattformfordeling",
-        value: winner.platform === Platform.TIKTOK ? "TikTok" : "Instagram",
-        description: `${
-          winner.platform === Platform.TIKTOK ? "TikTok" : "Instagram"
-        } sto for ${winnerShare.toFixed(1).replace(".", ",")} % av totale views i valgt periode.`,
+        value: platformLabel,
+        description: `${platformLabel} sto for ${winnerShare
+          .toFixed(1)
+          .replace(".", ",")} % av totale views i valgt periode.`,
       });
     }
 
