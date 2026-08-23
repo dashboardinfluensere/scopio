@@ -135,6 +135,14 @@ export default function OnboardingPlansClient({
 
   const selectedPlanMeta = getPlanBackendPayload(selectedPlan);
 
+  const visiblePlans = useMemo(() => {
+    if (mode === "upgrade") {
+      return plans.filter((plan) => plan.key !== "pro-trial");
+    }
+
+    return plans;
+  }, [mode]);
+
   const selectedPlanCard = useMemo(
     () => plans.find((plan) => plan.key === selectedPlan) ?? plans[0],
     [selectedPlan]
@@ -371,8 +379,15 @@ export default function OnboardingPlansClient({
     <>
       <div className="grid gap-8">
         <section className="flex justify-center">
-          <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-3 lg:gap-10">
-            {plans.map((plan) => {
+          <div
+            className={[
+              "grid w-full gap-8 lg:gap-10",
+              mode === "upgrade"
+                ? "max-w-4xl lg:grid-cols-2"
+                : "max-w-6xl lg:grid-cols-3",
+            ].join(" ")}
+          >
+            {visiblePlans.map((plan) => {
               const active = selectedPlan === plan.key;
               const price = getPriceBreakdown(plan.priceExVat);
 
