@@ -77,27 +77,27 @@ function formatDate(dateString: string | null | undefined) {
 }
 
 function getPlanName(subscription: SubscriptionInfo) {
-  if (!subscription) return "Ukjent plan";
-  if (subscription.plan === "BUSINESS") return "Business";
-  if (subscription.plan === "PRO" && subscription.status === "TRIALING") return "Pro Trial";
-  if (subscription.plan === "PRO") return "Pro";
-  if (subscription.plan === "STARTER") return "Starter";
-  return "Free";
+  if (!subscription) return "Ukjent oppsett";
+  if (subscription.plan === "BUSINESS") return "Stor scrape";
+  if (subscription.plan === "PRO" && subscription.status === "TRIALING") return "Test-scrape";
+  if (subscription.plan === "PRO") return "Liten scrape";
+  if (subscription.plan === "STARTER") return "Liten scrape";
+  return "Standard scrape";
 }
 
 function getPlanDescription(subscription: SubscriptionInfo) {
-  if (!subscription) return "Workspace-plan settes opp.";
+  if (!subscription) return "Scrape-oppsettet er ikke konfigurert.";
 
   if (subscription.status === "TRIALING") {
     const daysLeft = getDaysLeft(subscription.currentPeriodEnd);
 
     if (typeof daysLeft === "number") {
-      return `Prøveperioden er aktiv. ${daysLeft} dag${
+      return `Test-scrape er aktivt i ${daysLeft} dag${
         daysLeft === 1 ? "" : "er"
-      } igjen.`;
+      } til.`;
     }
 
-    return "Prøveperioden er aktiv.";
+    return "Test-scrape er aktivt.";
   }
 
   if (subscription.status === "ACTIVE") {
@@ -105,14 +105,18 @@ function getPlanDescription(subscription: SubscriptionInfo) {
       const endDate = formatDate(subscription.currentPeriodEnd);
 
       return endDate
-        ? `Medlemskapet er avsluttet og er aktivt frem til ${endDate}.`
-        : "Medlemskapet er avsluttet og er aktivt ut perioden.";
+        ? `Oppsettet er planlagt avsluttet ${endDate}.`
+        : "Oppsettet er planlagt avsluttet ved periodens slutt.";
     }
 
-    return "Abonnementet er aktivt.";
+    return "Scrape-oppsettet er aktivt.";
   }
 
-  return `Status: ${subscription.status}`;
+  if (subscription.status === "CANCELED") {
+    return "Scrape-oppsettet er avsluttet.";
+  }
+
+  return "Scrape-oppsettet er inaktivt.";
 }
 
 export default function WorkspaceSettingsForm({
@@ -168,16 +172,16 @@ export default function WorkspaceSettingsForm({
   const selectedMembershipIsCanceled = selectedSubscription?.cancelAtPeriodEnd === true;
 
   const supportEmail = "Dmytro@Maliarchuk.no";
-  const supportSubject = "Avslutte medlemskap i Scopio";
+  const supportSubject = "Avslutte workspace i Scopio";
 
   const supportBody = `Hei!
 
-Jeg ønsker å avslutte medlemskapet mitt i Scopio.
+Jeg ønsker å avslutte workspace-et mitt i Scopio.
 
 Workspace: ${deletableWorkspace?.organization.name ?? ""}
 Workspace-ID: ${deleteOrganizationId}
 
-Jeg ønsker at medlemskapet avsluttes og at tilknyttet workspace/data slettes.
+Jeg ønsker at workspace-et og tilhørende data slettes.
 
 Mvh`;
 
@@ -230,7 +234,7 @@ Mvh`;
     }
 
     if (!response.ok) {
-      const errorMessage = data?.error || "Kunne ikke avslutte medlemskapet.";
+      const errorMessage = data?.error || "Kunne ikke avslutte workspace-et.";
 
       if (
         data?.code === "MANUAL_CANCELLATION_REQUIRED" ||
@@ -282,8 +286,8 @@ Mvh`;
 
     setWorkspaceSuccess(
       formattedEndDate
-        ? `Medlemskapet er avsluttet. Du beholder tilgang frem til ${formattedEndDate}. Etter dette slettes workspace og tilknyttede data automatisk.`
-        : "Medlemskapet er avsluttet. Du beholder tilgang frem til perioden er over. Etter dette slettes workspace og tilknyttede data automatisk."
+        ? `Workspace-et avsluttes ${formattedEndDate}. Tilknyttede data slettes automatisk etterpå.`
+        : "Workspace-et avsluttes når perioden er over. Tilknyttede data slettes automatisk etterpå."
     );
 
     router.refresh();
@@ -551,7 +555,7 @@ Mvh`;
     setManualCancellationRequired(false);
 
     if (!deleteOrganizationId) {
-      setWorkspaceError("Velg et medlemskap du vil avslutte.");
+      setWorkspaceError("Velg et workspace du vil avslutte.");
       return;
     }
 
@@ -567,7 +571,7 @@ Mvh`;
       setWorkspaceError(
         err instanceof Error
           ? err.message
-          : "Noe gikk galt da medlemskapet skulle avsluttes."
+          : "Noe gikk galt da workspace-et skulle avsluttes."
       );
     } finally {
       setDeletingWorkspace(false);
@@ -580,7 +584,7 @@ Mvh`;
     setManualCancellationRequired(false);
 
     if (!deleteOrganizationId) {
-      setWorkspaceError("Velg et medlemskap du vil reaktivere.");
+      setWorkspaceError("Velg et workspace du vil beholde.");
       return;
     }
 
@@ -595,7 +599,7 @@ Mvh`;
       const data = await response.json();
 
       if (!response.ok) {
-        setWorkspaceError(data?.error || "Kunne ikke reaktivere medlemskapet.");
+        setWorkspaceError(data?.error || "Kunne ikke beholde workspace-et.");
         return;
       }
 
@@ -625,13 +629,13 @@ Mvh`;
       );
 
       setDeleteConfirmText("");
-      setWorkspaceSuccess("Medlemskapet er reaktivert. Automatisk sletting er avbrutt.");
+      setWorkspaceSuccess("Workspace-et beholdes. Automatisk sletting er avbrutt.");
       router.refresh();
     } catch (err) {
       setWorkspaceError(
         err instanceof Error
           ? err.message
-          : "Noe gikk galt da medlemskapet skulle reaktiveres."
+          : "Noe gikk galt da sletting av workspace skulle avbrytes."
       );
     } finally {
       setReactivatingWorkspace(false);
@@ -671,7 +675,7 @@ Mvh`;
             Workspace-innstillinger
           </h2>
           <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-            Administrer workspace, medlemmer, passord og medlemskap.
+            Administrer workspace, medlemmer, passord og scrape-oppsett.
           </p>
         </div>
 
@@ -708,7 +712,7 @@ Mvh`;
               className="text-xs font-medium uppercase tracking-wide"
               style={{ color: "var(--color-accent)" }}
             >
-              Plan
+              Scrape-oppsett
             </p>
             <p className="mt-1 text-base font-semibold" style={{ color: "var(--color-text)" }}>
               {activePlanName}
@@ -747,12 +751,12 @@ Mvh`;
               className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition"
               style={{ backgroundColor: "var(--color-accent)" }}
             >
-              Endre plan
+              Endre scrape-oppsett
             </Link>
 
             {isWorkspaceFull ? (
               <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-                Du har nådd maks antall medlemmer for denne planen.
+                Du har nådd maks antall medlemmer for dette scrape-oppsettet.
               </p>
             ) : null}
           </div>
@@ -961,18 +965,18 @@ Mvh`;
           }}
         >
           <h3 className="text-xl font-semibold" style={{ color: "var(--color-danger-text)" }}>
-            Avslutt medlemskap
+            Avslutt workspace
           </h3>
 
           <p className="mt-2 text-sm" style={{ color: "var(--color-danger-text)" }}>
-            Du beholder tilgang til Scopio frem til den betalte perioden er over. Etter
-            dette slettes workspace og tilknyttede data automatisk.
+            Workspace-et slettes automatisk når perioden er over. Tilknyttede data
+            fjernes samtidig.
           </p>
 
           <div className="mt-4 grid gap-4">
             <label className="flex flex-col gap-2 text-sm" style={{ color: "var(--color-text)" }}>
               <span className="font-medium" style={{ color: "var(--color-danger-text)" }}>
-                Velg workspace/medlemskap som skal avsluttes
+                Velg workspace som skal avsluttes
               </span>
 
               <select
@@ -1028,7 +1032,7 @@ Mvh`;
                   className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60"
                   style={{ backgroundColor: "#dc2626" }}
                 >
-                  {deletingWorkspace ? "Avslutter..." : "Avslutt medlemskap"}
+                  {deletingWorkspace ? "Avslutter..." : "Avslutt workspace"}
                 </button>
               ) : null}
 
@@ -1044,7 +1048,7 @@ Mvh`;
                     color: "var(--color-success-text)",
                   }}
                 >
-                  {reactivatingWorkspace ? "Reaktiverer..." : "Reaktiver medlemskap"}
+                  {reactivatingWorkspace ? "Reaktiverer..." : "Behold workspace"}
                 </button>
               ) : null}
             </div>
@@ -1063,8 +1067,8 @@ Mvh`;
                 }}
               >
                 {selectedMembershipIsCanceled
-                  ? "Medlemskapet er allerede avsluttet for "
-                  : "Du er i ferd med å avslutte medlemskapet for "}
+                  ? "Workspace-et er allerede planlagt avsluttet: "
+                  : "Du er i ferd med å avslutte workspace-et: "}
                 <span className="font-semibold">{deletableWorkspace.organization.name}</span>.
               </div>
             ) : null}
@@ -1082,13 +1086,12 @@ Mvh`;
           }}
         >
           <p className="font-semibold" style={{ color: "var(--color-text)" }}>
-            Vi må avslutte dette manuelt
+            Vi må behandle avslutningen manuelt
           </p>
 
           <p className="mt-2">
-            Dette medlemskapet kan ikke avsluttes automatisk akkurat nå. Send oss en
-            e-post, så avslutter vi medlemskapet og sletter workspace/data manuelt for
-            deg.
+            Dette workspace-et kan ikke avsluttes automatisk akkurat nå. Send oss en
+            e-post, så hjelper vi deg med sletting av workspace og data.
           </p>
 
           <button

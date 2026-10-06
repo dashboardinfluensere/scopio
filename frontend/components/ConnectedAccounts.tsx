@@ -192,7 +192,7 @@ export default function ConnectedAccounts({
 
     if (!canAddAccounts || limitReached) {
       setCreateError(
-        `Du har nådd maks antall nye kontoer for planen din de siste 30 dagene (${accountLimit}).`
+        `Du har nådd maks antall nye kontoer for scrape-oppsettet de siste 30 dagene (${accountLimit}).`
       );
       return;
     }
@@ -420,7 +420,7 @@ export default function ConnectedAccounts({
 
                 {limitReached ? (
                   <div className="rounded-xl border bg-[var(--color-warning-bg)] px-4 py-3 text-sm text-[var(--color-warning-text)] [border-color:var(--color-warning-bg)]">
-                    Du har nådd maks antall nye kontoer de siste 30 dagene. Vent til neste ledige plass, eller oppgrader planen om du vil ha høyere grense.
+                    Du har nådd maks antall nye kontoer de siste 30 dagene. Velg et større scrape-oppsett for høyere grense.
                   </div>
                 ) : null}
 

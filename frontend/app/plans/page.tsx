@@ -76,19 +76,19 @@ export default async function PlansPage() {
               <div className="inline-flex items-center rounded-full border border-[#FED7C9] bg-[#FFF4EF] px-4 py-2 text-sm font-medium text-[#C2410C]">
                 {isOnboardingMode
                   ? "Godkjent – neste steg"
-                  : "Gratisperioden er over"}
+                  : "Testperioden er over"}
               </div>
 
               <h1 className="mt-5 max-w-4xl text-4xl font-semibold tracking-tight lg:text-6xl">
                 {isOnboardingMode
-                  ? "Velg plan"
-                  : "Gratisperioden din er utløpt"}
+                  ? "Velg scrape-oppsett"
+                  : "Testperioden din er over"}
               </h1>
 
               <p className="mt-5 max-w-2xl text-base leading-8 text-[#475569]">
                 {isOnboardingMode
-                  ? "Velg planen du vil starte med."
-                  : "Oppgrader og få 3x så mye datagrunnlag i starten."}
+                  ? "Velg hvor stort scrape-oppsett du vil starte med."
+                  : "Velg scrape-oppsettet som passer workspace-et ditt."}
               </p>
             </div>
 

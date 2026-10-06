@@ -44,9 +44,9 @@ const steps = [
   },
   {
     number: "03",
-    title: "Velg plan og opprett workspace",
+    title: "Velg scrape-oppsett og opprett workspace",
     description:
-      "Når du er godkjent, velger du plan, oppretter workspace og kommer i gang.",
+      "Når du er godkjent, velger du scrape-oppsett, oppretter workspace og kommer i gang.",
   },
 ];
 

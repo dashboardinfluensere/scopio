@@ -64,9 +64,9 @@ function isValidSelectedPlan(value: string | null): value is SelectedPlanValue {
 }
 
 function getSelectedPlanLabel(plan: SelectedPlanValue) {
-  if (plan === "business") return "Business";
-  if (plan === "pro") return "Pro";
-  return "Free Trial";
+  if (plan === "business") return "Stor scrape";
+  if (plan === "pro") return "Liten scrape";
+  return "Test-scrape · 7 dager";
 }
 
 export default function ProfileForm({
@@ -460,7 +460,7 @@ export default function ProfileForm({
               Onboarding
             </p>
             <p className="mt-2 text-sm" style={{ color: "var(--color-text-soft)" }}>
-              Du er i ferd med å opprette et nytt workspace med planen {" "}
+              Du er i ferd med å opprette et nytt workspace med scrape-oppsettet {" "}
               <span style={{ color: "var(--color-text)", fontWeight: 700 }}>
                 {getSelectedPlanLabel(onboardingSelectedPlan)}
               </span>

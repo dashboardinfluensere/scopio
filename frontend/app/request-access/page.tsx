@@ -112,7 +112,7 @@ export default async function RequestAccessPage() {
             <p className="mt-5 max-w-2xl text-base leading-8 text-[#475569]">
               Du er logget inn, men har ikke tilgang til et workspace ennå. Send
               inn en kort forespørsel først. Hvis den blir godkjent, går du
-              videre til planvalg og opprettelse av workspace.
+              videre til valg av scrape-oppsett og opprettelse av workspace.
             </p>
 
             <div className="mt-10 grid gap-4 sm:grid-cols-3">
@@ -127,7 +127,7 @@ export default async function RequestAccessPage() {
                 },
                 {
                   title: "3",
-                  text: "Ved godkjenning går du videre til plan og workspace",
+                  text: "Ved godkjenning velger du scrape-oppsett og workspace",
                 },
               ].map((item) => (
                 <div
@@ -149,8 +149,8 @@ export default async function RequestAccessPage() {
                 Hva skjer etterpå?
               </p>
               <p className="mt-4 text-sm leading-7 text-[#CBD5E1]">
-                Når forespørselen er godkjent, kan du velge plan, skrive inn nytt
-                workspace-navn og komme i gang med onboarding.
+                Når forespørselen er godkjent, kan du velge scrape-oppsett, skrive
+                inn workspace-navn og komme i gang med onboarding.
               </p>
             </div>
           </section>

@@ -19,52 +19,26 @@ type Props = {
 type PlanMeta = {
   key: PlanKey;
   name: string;
-  badge?: string;
-  priceExVat: number;
-  description: string;
-  features: string[];
+  accountCount: number;
 };
 
-const VAT_RATE = 0.25;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 const plans: PlanMeta[] = [
   {
     key: "pro-trial",
-    name: "Free Trial",
-    badge: "7 dager",
-    priceExVat: 0,
-    description: "Test Scopio i 7 dager før du eventuelt går videre.",
-    features: [
-      "1 konto",
-      "2 medlemmer totalt",
-      "Starter med 90 dagers historikk",
-      "Daglig sync av siste 7 dager",
-    ],
+    name: "Test-scrape",
+    accountCount: 1,
   },
   {
     key: "pro",
-    name: "Pro",
-    priceExVat: 149,
-    description: "For creators og små team som vil ha mer historikk.",
-    features: [
-      "2 kontoer",
-      "2 medlemmer totalt (deg + 1)",
-      "Starter med 90 dagers historikk",
-      "Daglig sync av siste 7 dager",
-    ],
+    name: "Liten scrape",
+    accountCount: 2,
   },
   {
     key: "business",
-    name: "Business",
-    priceExVat: 349,
-    description: "For team og byråer som trenger mer kapasitet.",
-    features: [
-      "4 kontoer",
-      "10 medlemmer totalt",
-      "Starter med 90 dagers historikk",
-      "Daglig sync av siste 7 dager",
-    ],
+    name: "Stor scrape",
+    accountCount: 4,
   },
 ];
 
@@ -78,33 +52,6 @@ function getPlanBackendPayload(plan: PlanKey) {
   }
 
   return { selectedPlan: "pro-trial" as const };
-}
-
-function formatNok(value: number) {
-  return `${value.toLocaleString("nb-NO")} kr`;
-}
-
-function getPriceBreakdown(priceExVat: number) {
-  const vatAmount = Math.round(priceExVat * VAT_RATE);
-  const priceIncVat = priceExVat + vatAmount;
-
-  return {
-    exVat: formatNok(priceExVat),
-    vat: formatNok(vatAmount),
-    incVat: formatNok(priceIncVat),
-  };
-}
-
-function getWorkspaceHelpText(plan: PlanKey) {
-  if (plan === "business") {
-    return "Dette workspace-et starter på Business. Navn og passord kan endres senere av owner.";
-  }
-
-  if (plan === "pro") {
-    return "Dette workspace-et starter på Pro. Navn og passord kan endres senere av owner.";
-  }
-
-  return "Dette workspace-et starter på Free Trial. Navn og passord kan endres senere av owner.";
 }
 
 export default function OnboardingPlansClient({
@@ -163,7 +110,7 @@ export default function OnboardingPlansClient({
       const data = await res.json();
 
       if (!res.ok || !data.ok) {
-        throw new Error(data.error || "Kunne ikke oppgradere workspace");
+        throw new Error(data.error || "Kunne ikke endre scrape-oppsett.");
       }
 
       router.push("/dashboard");
@@ -389,7 +336,6 @@ export default function OnboardingPlansClient({
           >
             {visiblePlans.map((plan) => {
               const active = selectedPlan === plan.key;
-              const price = getPriceBreakdown(plan.priceExVat);
 
               return (
                 <button
@@ -406,24 +352,12 @@ export default function OnboardingPlansClient({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex flex-wrap items-center gap-2.5">
-                        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#FF6A3D]">
+                        <h3 className="text-2xl font-semibold tracking-tight text-[#0F172A]">
                           {plan.name}
-                        </p>
+                        </h3>
 
-                        {plan.badge ? (
-                          <span className="rounded-full bg-[#FFF4EF] px-2.5 py-1 text-[11px] font-semibold text-[#C2410C]">
-                            {plan.badge}
-                          </span>
-                        ) : null}
                       </div>
 
-                      <h3 className="mt-5 text-4xl font-semibold tracking-tight text-[#0F172A]">
-                        {plan.priceExVat === 0 ? "0 kr" : `${price.exVat}/mnd`}
-                      </h3>
-
-                      <p className="mt-2 text-sm text-[#475569]">
-                        {plan.priceExVat === 0 ? "Gratis i 7 dager" : "Eks. MVA"}
-                      </p>
                     </div>
 
                     {active ? (
@@ -433,48 +367,8 @@ export default function OnboardingPlansClient({
                     ) : null}
                   </div>
 
-                  <div className="mt-8 space-y-3 border-t border-[#EEF2F7] pt-6 text-sm text-[#475569]">
-                    <div className="flex items-center justify-between gap-4">
-                      <span>Pris eks. MVA</span>
-                      <span className="font-medium text-[#0F172A]">
-                        {price.exVat}/mnd
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-4">
-                      <span>MVA 25 %</span>
-                      <span className="font-medium text-[#0F172A]">
-                        {price.vat}/mnd
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-4 pt-2">
-                      <span className="font-semibold text-[#0F172A]">
-                        Totalt inkl. MVA
-                      </span>
-                      <span className="font-semibold text-[#0F172A]">
-                        {price.incVat}/mnd
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="mt-8 text-base leading-8 text-[#64748B]">
-                    {plan.description}
-                  </p>
-
-                  <div className="mt-8 space-y-5 text-[15px] leading-8 text-[#0F172A]">
-                    {plan.features.map((feature) => (
-                      <p key={feature}>{feature}</p>
-                    ))}
-                  </div>
-
-                  <div className="mt-8 border-t border-[#EEF2F7] pt-6">
-                    <p className="text-sm font-semibold text-[#C2410C]">
-                      Starter med 90 dager historikk
-                    </p>
-                    <p className="mt-2 text-sm leading-7 text-[#9A3412]">
-                      Du får mer data fra start, ikke bare nye tall fremover.
-                    </p>
+                  <div className="mt-4 text-sm font-medium text-[#64748B]">
+                    {plan.accountCount} {plan.accountCount === 1 ? "konto" : "kontoer"}
                   </div>
                 </button>
               );
@@ -497,8 +391,8 @@ export default function OnboardingPlansClient({
           >
             {upgradeLoading
               ? "Fortsetter..."
-              : mode === "upgrade"
-                ? `Oppgrader til ${selectedPlanCard.name}`
+                : mode === "upgrade"
+                ? `Velg ${selectedPlanCard.name}`
                 : `Fortsett med ${selectedPlanCard.name}`}
           </button>
         </div>
@@ -530,15 +424,6 @@ export default function OnboardingPlansClient({
               >
                 ✕
               </button>
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-[#FED7C9] bg-[#FFF7F3] p-4">
-              <p className="text-sm font-semibold text-[#C2410C]">
-                Dette kan endres senere
-              </p>
-              <p className="mt-2 text-sm leading-7 text-[#9A3412]">
-                {getWorkspaceHelpText(selectedPlan)}
-              </p>
             </div>
 
             <div className="mt-6 grid gap-4">

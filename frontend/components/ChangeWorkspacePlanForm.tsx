@@ -55,39 +55,17 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 const PLANS: Array<{
   key: PlanKey;
   name: string;
-  price: string;
-  description: string;
   accountLimit: number;
-  memberLimit: number;
-  bullets: string[];
 }> = [
   {
     key: "pro",
-    name: "Pro",
-    price: "149 kr/mnd",
-    description: "For creators og små team som vil ha mer historikk.",
+    name: "Liten scrape",
     accountLimit: 2,
-    memberLimit: 2,
-    bullets: [
-      "2 kontoer",
-      "2 medlemmer totalt",
-      "Starter med 90 dagers historikk",
-      "Daglig sync av siste 7 dager",
-    ],
   },
   {
     key: "business",
-    name: "Business",
-    price: "349 kr/mnd",
-    description: "For team og byråer som trenger mer kapasitet.",
+    name: "Stor scrape",
     accountLimit: 4,
-    memberLimit: 10,
-    bullets: [
-      "4 kontoer",
-      "10 medlemmer totalt",
-      "Starter med 90 dagers historikk",
-      "Daglig sync av siste 7 dager",
-    ],
   },
 ];
 
@@ -112,25 +90,25 @@ function getCurrentPlanKey(subscription: SubscriptionInfo): PlanKey | "trial" | 
 function getCurrentPlanName(subscription: SubscriptionInfo) {
   const key = getCurrentPlanKey(subscription);
 
-  if (key === "business") return "Business";
-  if (key === "pro") return "Pro";
-  if (key === "trial") return "Free Trial";
+  if (key === "business") return "Stor scrape";
+  if (key === "pro") return "Liten scrape";
+  if (key === "trial") return "Test-scrape";
 
-  return "Ukjent plan";
+  return "Ukjent oppsett";
 }
 
 function getPlanActionLabel(planKey: PlanKey, currentPlanKey: PlanKey | "trial" | "unknown") {
-  if (planKey === currentPlanKey) return "Nåværende plan";
+  if (planKey === currentPlanKey) return "Nåværende oppsett";
 
   if (currentPlanKey === "business" && planKey === "pro") {
-    return "Nedgrader til Pro";
+    return "Bytt til liten scrape";
   }
 
   if (planKey === "business") {
-    return "Oppgrader til Business";
+    return "Bytt til stor scrape";
   }
 
-  return "Endre til Pro";
+  return "Bytt til liten scrape";
 }
 
 export default function ChangeWorkspacePlanForm({
@@ -170,17 +148,17 @@ export default function ChangeWorkspacePlanForm({
     setSuccess("");
 
     if (!isOwner) {
-      setError("Kun owner kan endre plan for workspace.");
+      setError("Kun owner kan endre scrape-oppsett for workspace.");
       return;
     }
 
     if (!selectedPlan) {
-      setError("Velg en plan først.");
+      setError("Velg et scrape-oppsett først.");
       return;
     }
 
     if (selectedPlan === currentPlanKey) {
-      setError("Dette workspacet er allerede på denne planen.");
+      setError("Dette workspacet bruker allerede dette scrape-oppsettet.");
       return;
     }
 
@@ -199,19 +177,19 @@ export default function ChangeWorkspacePlanForm({
       };
 
       if (!response.ok) {
-        setError(data.error || "Kunne ikke endre plan.");
+        setError(data.error || "Kunne ikke endre scrape-oppsett.");
         setErrorCode(data.code || "");
         return;
       }
 
-      setSuccess(data.message || "Planen er endret.");
+      setSuccess("Scrape-oppsettet er endret.");
       router.push("/account/workspace-settings");
       router.refresh();
     } catch (err) {
       setError(
         err instanceof Error
           ? err.message
-          : "Noe gikk galt da planen skulle endres."
+          : "Noe gikk galt da scrape-oppsettet skulle endres."
       );
     } finally {
       setSubmitting(false);
@@ -232,16 +210,16 @@ export default function ChangeWorkspacePlanForm({
             className="text-xs font-semibold uppercase tracking-wide"
             style={{ color: "var(--color-accent)" }}
           >
-            Workspace-plan
+            Workspace-oppsett
           </p>
           <h2
             className="text-2xl font-semibold"
             style={{ color: "var(--color-text)" }}
           >
-            Endre plan
+            Endre scrape-oppsett
           </h2>
           <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-            Du endrer planen for workspace-et under. Free Trial kan ikke velges her.
+            Velg hvor stort scrape-oppsett workspace-et skal bruke. Test-scrape kan ikke velges her.
           </p>
         </div>
 
@@ -281,7 +259,7 @@ export default function ChangeWorkspacePlanForm({
               className="text-xs font-medium uppercase tracking-wide"
               style={{ color: "var(--color-accent)" }}
             >
-              Nåværende plan
+              Nåværende oppsett
             </p>
             <p
               className="mt-1 text-base font-semibold"
@@ -333,10 +311,10 @@ export default function ChangeWorkspacePlanForm({
               className="text-xl font-semibold"
               style={{ color: "var(--color-text)" }}
             >
-              Velg ny plan
+              Velg nytt scrape-oppsett
             </h3>
             <p className="text-sm" style={{ color: "var(--color-muted)" }}>
-              Hvis du nedgraderer, må workspacet være innenfor grensene til planen du velger.
+              Hvis du velger et mindre oppsett, må workspace-et være innenfor grensene som vises.
             </p>
           </div>
 
@@ -344,9 +322,6 @@ export default function ChangeWorkspacePlanForm({
             {availablePlans.map((plan) => {
               const isCurrent = plan.key === currentPlanKey;
               const isSelected = plan.key === selectedPlan;
-              const wouldExceedAccounts = activeAccountsCount > plan.accountLimit;
-              const wouldExceedMembers = activeWorkspace.organization.memberCount > plan.memberLimit;
-              const hasLimitWarning = !isCurrent && (wouldExceedAccounts || wouldExceedMembers);
 
               return (
                 <button
@@ -370,19 +345,13 @@ export default function ChangeWorkspacePlanForm({
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p
-                        className="text-xs font-semibold uppercase tracking-[0.18em]"
+                        className="text-lg font-semibold"
                         style={{ color: "var(--color-accent)" }}
                       >
                         {plan.name}
                       </p>
-                      <p
-                        className="mt-4 text-2xl font-semibold"
-                        style={{ color: "var(--color-text)" }}
-                      >
-                        {plan.price}
-                      </p>
                       <p className="mt-2 text-sm" style={{ color: "var(--color-muted)" }}>
-                        {plan.description}
+                        {plan.accountLimit} {plan.accountLimit === 1 ? "konto" : "kontoer"}
                       </p>
                     </div>
 
@@ -409,40 +378,6 @@ export default function ChangeWorkspacePlanForm({
                     ) : null}
                   </div>
 
-                  <div
-                    className="my-5 h-px w-full"
-                    style={{ backgroundColor: "var(--color-border)" }}
-                  />
-
-                  <div className="grid gap-3">
-                    {plan.bullets.map((bullet) => (
-                      <p key={bullet} className="text-sm" style={{ color: "var(--color-text-soft)" }}>
-                        {bullet}
-                      </p>
-                    ))}
-                  </div>
-
-                  {hasLimitWarning ? (
-                    <div
-                      className="mt-5 rounded-xl border px-4 py-3 text-sm"
-                      style={{
-                        borderColor: "rgba(255, 106, 61, 0.25)",
-                        backgroundColor: "rgba(255, 106, 61, 0.08)",
-                        color: "var(--color-text-soft)",
-                      }}
-                    >
-                      {wouldExceedAccounts ? (
-                        <p>
-                          Dette workspacet har {activeAccountsCount} aktive kontoer. {plan.name} tillater maks {plan.accountLimit}.
-                        </p>
-                      ) : null}
-                      {wouldExceedMembers ? (
-                        <p className={wouldExceedAccounts ? "mt-2" : ""}>
-                          Dette workspacet har {activeWorkspace.organization.memberCount} medlemmer. {plan.name} tillater maks {plan.memberLimit}.
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
                 </button>
               );
             })}
@@ -457,7 +392,7 @@ export default function ChangeWorkspacePlanForm({
                 color: "var(--color-danger-text)",
               }}
             >
-              Kun owner kan endre plan for workspace.
+              Kun owner kan endre scrape-oppsett for workspace.
             </div>
           ) : null}
 
@@ -513,7 +448,7 @@ export default function ChangeWorkspacePlanForm({
                 ? "Endrer..."
                 : selectedPlanDetails
                   ? getPlanActionLabel(selectedPlanDetails.key, currentPlanKey)
-                  : "Endre plan"}
+                  : "Endre scrape-oppsett"}
             </button>
 
             <Link

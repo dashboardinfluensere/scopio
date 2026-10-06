@@ -281,7 +281,7 @@ export default function InitialAccountOnboarding({
     }
 
     if (usedCount >= accountLimit) {
-      setError(`Du har nådd maks antall kontoer for planen din (${accountLimit}).`);
+      setError(`Du har nådd maks antall kontoer for scrape-oppsettet (${accountLimit}).`);
       return;
     }
 
@@ -405,9 +405,9 @@ export default function InitialAccountOnboarding({
                 <div className="mt-4 rounded-2xl border border-[#EEF2F7] bg-white p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                      <p className="text-sm font-semibold text-[#0F172A]">Konto-limit</p>
+                      <p className="text-sm font-semibold text-[#0F172A]">Scrape-kapasitet</p>
                       <p className="mt-1 text-xs text-[#667085]">
-                        {remainingCount} ledige plasser igjen på denne planen
+                        {remainingCount} ledige kontoer i dette scrape-oppsettet
                       </p>
                     </div>
 

@@ -49,7 +49,7 @@ function formatActionLabel(action: string) {
     case "ORGANIZATION_CREATED_AFTER_APPROVAL":
       return "Workspace opprettet etter godkjenning";
     case "ORGANIZATION_UPGRADED":
-      return "Workspace oppgradert";
+      return "Scrape-oppsett endret";
     case "ORGANIZATION_RENAMED":
       return "Workspace endret navn";
     case "ORGANIZATION_PASSWORD_UPDATED":
